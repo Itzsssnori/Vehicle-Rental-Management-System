@@ -1,0 +1,26 @@
+# Environment and local configuration
+.env
+.env.*
+!.env.example
+
+# Local database and runtime files
+*.sqlite
+*.sqlite3
+*.db
+*.log
+
+# PHP and web-server local files
+vendor/
+*.cache
+*.tmp
+*.swp
+.phpunit.result.cache
+
+# Local development tooling
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Uploaded or generated local images
+public/assets/img/uploads/

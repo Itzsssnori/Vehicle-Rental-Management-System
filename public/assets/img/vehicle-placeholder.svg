@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 700" role="img" aria-labelledby="title desc">
+  <title id="title">Vehicle image unavailable</title>
+  <desc id="desc">VELO vehicle placeholder</desc>
+  <rect width="1200" height="700" fill="#26384f"/>
+  <path d="M265 430h670l-55-115c-14-29-42-48-74-51l-110-12-75-73c-14-14-33-22-53-22H451c-25 0-48 12-62 33l-82 122c-11 17-28 29-49 34l-44 11c-22 6-37 26-37 49v24c0 17 14 31 31 31h57" fill="#a9b9a5"/>
+  <path d="M935 430h-57M321 430h-57" stroke="#f8f7f3" stroke-width="24" stroke-linecap="round"/>
+  <circle cx="345" cy="430" r="52" fill="#292d32" stroke="#f8f7f3" stroke-width="12"/>
+  <circle cx="855" cy="430" r="52" fill="#292d32" stroke="#f8f7f3" stroke-width="12"/>
+  <path d="M401 310h278l-54-78H454c-18 0-35 9-45 24z" fill="#f8f7f3" opacity=".8"/>
+  <text x="600" y="575" fill="#fff" font-family="Arial, sans-serif" font-size="54" font-weight="700" letter-spacing="12" text-anchor="middle">VELO</text>
+</svg>
