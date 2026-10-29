@@ -39,10 +39,9 @@ $insert = $pdo->prepare(
     'INSERT INTO vehicles (brand, model, category, transmission, seats, daily_rate, image) VALUES (?, ?, ?, ?, ?, ?, ?)'
 );
 
-function find_vehicle_image(string $brand, string $model): ?string {
-    $query = rawurlencode($brand . ' ' . $model . ' car');
+function fetch_json(string $url): ?array {
     $url = 'https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch='
-        . $query . '&gsrnamespace=6&gsrlimit=10&prop=imageinfo&iiprop=url&iiurlwidth=900&format=json';
+        . rawurlencode($url) . '&gsrnamespace=6&gsrlimit=20&prop=imageinfo&iiprop=url&iiurlwidth=900&format=json';
     $context = stream_context_create([
         'http' => [
             'method' => 'GET',
@@ -51,9 +50,19 @@ function find_vehicle_image(string $brand, string $model): ?string {
             'header' => "Accept: application/json\r\nUser-Agent: VELO-VRMS/1.0\r\n",
         ],
     ]);
-    $response = @file_get_contents($url, false, $context);
-    $payload = $response === false ? null : json_decode($response, true);
+    $response = file_get_contents($url, false, $context);
+    if ($response === false) {
+        return null;
+    }
+    $payload = json_decode($response, true);
+    return is_array($payload) ? $payload : null;
+}
+
+function find_vehicle_image(string $brand, string $model): ?string {
+    $payload = fetch_json($brand . ' ' . $model . ' car');
     $excludedTerms = ['interior', 'dashboard', 'police', 'patrol', 'concept', 'render', 'toy'];
+    $bestUrl = null;
+    $bestScore = 0;
     foreach (($payload['query']['pages'] ?? []) as $page) {
         $title = strtolower($page['title'] ?? '');
         $isExcluded = false;
@@ -63,27 +72,32 @@ function find_vehicle_image(string $brand, string $model): ?string {
                 break;
             }
         }
-        if (!$isExcluded && str_contains($title, strtolower($brand)) && str_contains($title, strtolower($model))) {
-            return $page['imageinfo'][0]['thumburl'] ?? $page['imageinfo'][0]['url'] ?? null;
+        if ($isExcluded) {
+            continue;
+        }
+        $score = 0;
+        foreach (preg_split('/[\s-]+/', strtolower($brand . ' ' . $model)) as $term) {
+            if ($term !== '' && str_contains($title, $term)) {
+                $score++;
+            }
+        }
+        if ($score > $bestScore) {
+            $bestScore = $score;
+            $bestUrl = $page['imageinfo'][0]['thumburl'] ?? $page['imageinfo'][0]['url'] ?? null;
         }
     }
-    return null;
+    return $bestUrl;
 }
 
 foreach ($makeModels as [$make, $model, $category, $seats, $rate]) {
-    $api = 'https://vpic.nhtsa.dot.gov/api/vehicles/GetModelsForMake/' . rawurlencode($make) . '?format=json';
-    $context = stream_context_create([
-        'http' => [
-            'method' => 'GET',
-            'timeout' => 15,
-            'ignore_errors' => true,
-            'header' => "Accept: application/json\r\nUser-Agent: VELO-VRMS/1.0\r\n",
-        ],
-    ]);
-    $response = @file_get_contents($api, false, $context);
     $check->execute([$make, $model]);
     $existing = $check->fetch();
-    $image = find_vehicle_image($make, $model) ?? 'vehicle-placeholder.svg';
+    $image = find_vehicle_image($make, $model);
+    if ($image === null) {
+        $skipped++;
+        fwrite(STDERR, "No image found for {$make} {$model}; using placeholder.\n");
+        $image = 'vehicle-placeholder.svg';
+    }
     if ($existing) {
         $update->execute([$category, 'Automatic', $seats, $rate, 'operational', $image, $existing['id']]);
         $updated++;
@@ -94,7 +108,7 @@ foreach ($makeModels as [$make, $model, $category, $seats, $rate]) {
 }
 
 if (PHP_SAPI === 'cli') {
-    echo "Inserted: {$inserted}; updated: {$updated}; skipped: {$skipped}\n";
+    echo "Inserted: {$inserted}; updated: {$updated}; images missing: {$skipped}\n";
     exit;
 }
 header('Location: /admin/admin-vehicles.php?seeded=' . $inserted . '&updated=' . $updated);

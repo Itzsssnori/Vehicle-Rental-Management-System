@@ -1,6 +1,10 @@
 Options -Indexes
 DirectoryIndex index.php
 
+<IfModule mod_authz_core.c>
+    Require all granted
+</IfModule>
+
 <IfModule mod_rewrite.c>
     RewriteEngine On
     RewriteCond %{REQUEST_FILENAME} !-f

@@ -7,12 +7,14 @@ if (session_status() !== PHP_SESSION_ACTIVE) {
 function db(): PDO {
     static $pdo = null;
     if ($pdo === null) {
-        $dbHost = getenv('DB_HOST') ?: 'localhost';
+        // Use TCP by default so native PHP and XAMPP PHP do not depend on different Unix sockets.
+        $dbHost = getenv('DB_HOST') ?: '127.0.0.1';
+        $dbPort = getenv('DB_PORT') ?: '3306';
         $dbName = getenv('DB_NAME') ?: 'vrms';
         $dbUser = getenv('DB_USER') ?: 'vrms';
         $dbPass = getenv('DB_PASS') ?: 'vrms123';
 
-        $pdo = new PDO("mysql:host={$dbHost};dbname={$dbName};charset=utf8mb4", $dbUser, $dbPass, [
+        $pdo = new PDO("mysql:host={$dbHost};port={$dbPort};dbname={$dbName};charset=utf8mb4", $dbUser, $dbPass, [
             PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
         ]);
