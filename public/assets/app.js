@@ -59,6 +59,102 @@ document.querySelectorAll('[data-password-toggle]').forEach(toggle => {
   });
 });
 
+// Filter the landing-page fleet without leaving the page.
+(function initFleetFilters() {
+  const grid = document.getElementById('landing-fleet-grid');
+  const filters = document.querySelectorAll('[data-fleet-filter]');
+  if (!grid || !filters.length) return;
+
+  const cards = Array.from(grid.querySelectorAll('[data-fleet-category]'));
+  let emptyState = grid.querySelector('.fleet-filter-empty');
+
+  function setFilter(filter) {
+    const normalizedFilter = filter.toLowerCase();
+    let visibleCount = 0;
+
+    cards.forEach(card => {
+      const category = (card.dataset.fleetCategory || '').trim().toLowerCase();
+      const visible = normalizedFilter === 'all' || category === normalizedFilter;
+      card.hidden = !visible;
+      card.classList.toggle('is-filtered-out', !visible);
+      if (visible) visibleCount += 1;
+    });
+
+    filters.forEach(button => {
+      const active = (button.dataset.fleetFilter || '').toLowerCase() === normalizedFilter;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-selected', String(active));
+    });
+
+    if (visibleCount === 0) {
+      if (!emptyState) {
+        emptyState = document.createElement('div');
+        emptyState.className = 'fleet-filter-empty';
+        emptyState.innerHTML = '<p>No vehicles are currently available in this category.</p><a href="/vehicles.php" class="btn btn-navy">Browse Full Fleet</a>';
+        grid.appendChild(emptyState);
+      }
+      emptyState.hidden = false;
+    } else if (emptyState) {
+      emptyState.hidden = true;
+    }
+  }
+
+  filters.forEach(filter => {
+    filter.setAttribute('role', 'tab');
+    filter.addEventListener('click', event => {
+      event.preventDefault();
+      setFilter(filter.dataset.fleetFilter || 'all');
+      document.getElementById('fleet')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  });
+
+  const initialFilter = Array.from(filters).find(filter => filter.classList.contains('active'));
+  setFilter(initialFilter?.dataset.fleetFilter || 'all');
+})();
+
+// Keep the landing-page navbar indicator synchronized with the visible section.
+(function initLandingSectionNavigation() {
+  const sectionLinks = Array.from(document.querySelectorAll('[data-nav-section]'));
+  const sectionMap = {
+    home: document.getElementById('portal-hero'),
+    about: document.getElementById('about'),
+    how: document.getElementById('how'),
+    contact: document.getElementById('contact')
+  };
+  const sections = Object.entries(sectionMap).filter(([, section]) => section);
+  if (!sections.length || !sectionLinks.length) return;
+
+  function setActiveSection(sectionName) {
+    sectionLinks.forEach(link => {
+      const active = link.dataset.navSection === sectionName;
+      link.classList.toggle('active', active);
+      if (active) link.setAttribute('aria-current', 'location');
+      else link.removeAttribute('aria-current');
+    });
+  }
+
+  const observer = new IntersectionObserver(entries => {
+    const visible = entries
+      .filter(entry => entry.isIntersecting)
+      .sort((a, b) => b.intersectionRatio - a.intersectionRatio);
+    if (visible.length) {
+      const section = sections.find(([, element]) => element === visible[0].target);
+      if (section) setActiveSection(section[0]);
+    }
+  }, {
+    rootMargin: '-18% 0px -62% 0px',
+    threshold: [0.1, 0.35, 0.6]
+  });
+
+  sections.forEach(([, section]) => observer.observe(section));
+  sectionLinks.forEach(link => {
+    link.addEventListener('click', () => {
+      const sectionName = link.dataset.navSection;
+      if (sectionMap[sectionName]) setActiveSection(sectionName);
+    });
+  });
+})();
+
 // Landing page dynamic hero car rotator
 (function initHeroRotator() {
   const hero = document.getElementById('portal-hero');

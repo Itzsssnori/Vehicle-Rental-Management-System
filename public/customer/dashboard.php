@@ -1,278 +1,601 @@
 <?php
-$title = 'My Dashboard';
+$title = 'Customer Dashboard';
 require_once __DIR__ . '/../../config.php';
 $user = require_customer();
-$accountStmt = db()->prepare('SELECT name, email, phone, address, profile_image, preferred_payment_method FROM users WHERE id = ?');
-$accountStmt->execute([$user['id']]);
-$account = $accountStmt->fetch();
-$standing = customer_standing(db(), (int)$user['id']);
-$accountMessage = '';
-$accountError = '';
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'update_account') {
-    verify_csrf();
-    $name = trim($_POST['name'] ?? '');
-    $email = trim($_POST['email'] ?? '');
-    $phone = trim($_POST['phone'] ?? '');
-    $address = trim($_POST['address'] ?? '');
-    $profileImage = trim($_POST['profile_image'] ?? '');
-    $paymentMethod = $_POST['preferred_payment_method'] ?? '';
-    if ($name === '' || !filter_var($email, FILTER_VALIDATE_EMAIL) || !in_array($paymentMethod, ['', 'cash', 'bank_transfer', 'gcash', 'card'], true)) {
-        $accountError = 'Enter a valid name, email, and payment method.';
-    } else {
-        $duplicate = db()->prepare('SELECT id FROM users WHERE email = ? AND id <> ? LIMIT 1');
-        $duplicate->execute([$email, $user['id']]);
-        if ($duplicate->fetch()) {
-            $accountError = 'That email address is already in use.';
-        } elseif ($profileImage !== '' && !preg_match('#^https?://#i', $profileImage)) {
-            $accountError = 'Profile image must be a valid http or https image URL.';
-        } else {
-            $update = db()->prepare('UPDATE users SET name = ?, email = ?, phone = ?, address = ?, profile_image = ?, preferred_payment_method = ? WHERE id = ?');
-            $update->execute([$name, $email, $phone ?: null, $address ?: null, $profileImage ?: null, $paymentMethod ?: null, $user['id']]);
-            $_SESSION['user']['name'] = $name;
-            $_SESSION['user']['email'] = $email;
-            $account = array_merge($account, [
-                'name' => $name,
-                'email' => $email,
-                'phone' => $phone,
-                'address' => $address,
-                'profile_image' => $profileImage,
-            ]);
-            $account['preferred_payment_method'] = $paymentMethod;
-            $accountMessage = 'Account details updated.';
-        }
-    }
-}
-include __DIR__ . '/../../includes/header.php';
 
-$stmt = db()->prepare(
-    "SELECT r.id, r.requested_pickup_at AS start_date, r.requested_return_at AS end_date,
-            NULL AS actual_return, r.total_amount, r.status,
-            v.brand, v.model, c.name AS category, v.image,
+$pdo = db();
+$accountStmt = $pdo->prepare('SELECT id, name, email, phone, address, profile_image, preferred_payment_method, created_at FROM users WHERE id = ?');
+$accountStmt->execute([$user['id']]);
+$account = $accountStmt->fetch() ?: $user;
+
+$standing = customer_standing($pdo, (int)$user['id']);
+$standingType = $standing['standing'] ?? 'good';
+$standingPoints = (int)($standing['points'] ?? 0);
+
+// Fetch all customer reservations with details
+$stmt = $pdo->prepare(
+    "SELECT r.id, r.reference_number, r.requested_pickup_at AS start_date, r.requested_return_at AS end_date,
+            r.base_amount, r.total_amount, r.status, r.payment_method, r.created_at,
+            v.id AS vehicle_id, v.brand, v.model, c.name AS category, v.image,
+            pl.name AS pickup_location, rl.name AS return_location,
+            rt.id AS rental_id, rt.status AS rental_status,
             COALESCE(SUM(p.amount), 0) AS paid_amount
      FROM reservations r
      INNER JOIN vehicles v ON v.id = r.vehicle_id
      INNER JOIN vehicle_categories c ON c.id = v.category_id
+     LEFT JOIN locations pl ON pl.id = r.pickup_location_id
+     LEFT JOIN locations rl ON rl.id = r.return_location_id
      LEFT JOIN rentals rt ON rt.reservation_id = r.id
-     LEFT JOIN payments p ON p.reservation_id = r.id OR p.rental_id = rt.id
+     LEFT JOIN payments p ON p.reservation_id = r.id OR (rt.id IS NOT NULL AND p.rental_id = rt.id)
      WHERE r.customer_id = ?
-     GROUP BY r.id, rt.id, v.id, c.id
-     ORDER BY r.requested_pickup_at DESC, r.created_at DESC"
+     GROUP BY r.id, rt.id, v.id, c.id, pl.id, rl.id
+     ORDER BY r.created_at DESC"
 );
 $stmt->execute([$user['id']]);
-$rentals = $stmt->fetchAll();
+$allReservations = $stmt->fetchAll();
 
-$active = array_values(array_filter($rentals, static fn(array $r): bool =>
+// Group trips
+$activeTrips = array_values(array_filter($allReservations, static fn(array $r): bool =>
     in_array($r['status'], ['pending', 'confirmed', 'ongoing'], true)
 ));
-$upcoming = array_values(array_filter($rentals, static fn(array $r): bool =>
+$ongoingTrips = array_values(array_filter($allReservations, static fn(array $r): bool =>
+    $r['status'] === 'ongoing'
+));
+$upcomingTrips = array_values(array_filter($allReservations, static fn(array $r): bool =>
     in_array($r['status'], ['pending', 'confirmed'], true) && $r['start_date'] >= date('Y-m-d')
 ));
-$paidTotal = array_sum(array_map(static fn(array $r): float => (float)$r['paid_amount'], $rentals));
-$activeRentals = array_values(array_filter($rentals, static fn(array $r): bool =>
-    in_array($r['status'], ['pending', 'confirmed', 'ongoing'], true)
-));
-$historyRentals = array_values(array_filter($rentals, static fn(array $r): bool =>
-    in_array($r['status'], ['completed', 'cancelled', 'rejected'], true)
-));
-$historyRentals = array_slice($historyRentals, 0, 3);
-$notificationStmt = db()->prepare(
-    'SELECT id, title, message, created_at FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 5'
+
+// Lifetime paid
+$paidStmt = $pdo->prepare(
+    "SELECT COALESCE(SUM(p.amount), 0)
+     FROM payments p
+     INNER JOIN reservations r ON r.id = p.reservation_id
+     WHERE r.customer_id = ?"
 );
-$notificationStmt->execute([$user['id']]);
-$notifications = $notificationStmt->fetchAll();
-$financialStmt = db()->prepare(
-    "SELECT r.reference_number, rc.charge_type, rc.description, rc.amount, rc.created_at,
-            COALESCE(SUM(DISTINCT p.amount), 0) AS paid_amount
+$paidStmt->execute([$user['id']]);
+$lifetimePaid = (float)$paidStmt->fetchColumn();
+
+// Calculate total outstanding balance across active bookings
+$totalOutstanding = 0.0;
+foreach ($activeTrips as $res) {
+    $bal = rental_balance($pdo, (int)$res['id'], $res['rental_id'] ? (int)$res['rental_id'] : null);
+    $totalOutstanding += $bal['outstanding'];
+}
+
+// Find Spotlight Trip (Ongoing first, then confirmed upcoming, then pending)
+$spotlightTrip = null;
+if (!empty($ongoingTrips)) {
+    $spotlightTrip = $ongoingTrips[0];
+} elseif (!empty($upcomingTrips)) {
+    $spotlightTrip = $upcomingTrips[0];
+} elseif (!empty($activeTrips)) {
+    $spotlightTrip = $activeTrips[0];
+}
+
+// Payments and receipts
+$paymentStmt = $pdo->prepare(
+    "SELECT p.id, p.amount, p.method, p.reference_number, p.paid_at, pr.receipt_number,
+            r.id AS reservation_id, r.reference_number AS reservation_reference,
+            v.brand, v.model,
+            COALESCE(SUM(rf.amount), 0) AS refunded_amount
+     FROM payments p
+     INNER JOIN reservations r ON r.id = p.reservation_id
+     INNER JOIN vehicles v ON v.id = r.vehicle_id
+     LEFT JOIN payment_receipts pr ON pr.payment_id = p.id
+     LEFT JOIN refunds rf ON rf.payment_id = p.id
+     WHERE r.customer_id = ?
+     GROUP BY p.id, r.id, pr.id, v.id
+     ORDER BY p.paid_at DESC LIMIT 10"
+);
+$paymentStmt->execute([$user['id']]);
+$paymentHistory = $paymentStmt->fetchAll();
+
+// Financial charges ledger
+$financialStmt = $pdo->prepare(
+    "SELECT r.id AS reservation_id, r.reference_number, rc.charge_type, rc.description, rc.amount, rc.created_at
      FROM reservations r
      LEFT JOIN rentals rt ON rt.reservation_id = r.id
      INNER JOIN rental_charges rc ON rc.reservation_id = r.id OR rc.rental_id = rt.id
-     LEFT JOIN payments p ON p.reservation_id = r.id OR p.rental_id = rt.id
      WHERE r.customer_id = ?
-     GROUP BY rc.id, r.id, rt.id
      ORDER BY rc.created_at DESC
      LIMIT 10"
 );
 $financialStmt->execute([$user['id']]);
 $financialRecords = $financialStmt->fetchAll();
-$penaltyStmt = db()->prepare(
+
+// Penalty events
+$penaltyStmt = $pdo->prepare(
     "SELECT event_type, points, reason, status, expires_at, created_at
      FROM penalty_events WHERE user_id = ? ORDER BY created_at DESC LIMIT 10"
 );
 $penaltyStmt->execute([$user['id']]);
 $penaltyHistory = $penaltyStmt->fetchAll();
-$paymentStmt = db()->prepare(
-    "SELECT p.amount, p.method, p.reference_number, p.paid_at, pr.receipt_number,
-            r.reference_number AS reservation_reference,
-            COALESCE(SUM(rf.amount), 0) AS refunded_amount
-     FROM payments p
-     INNER JOIN reservations r ON r.id = p.reservation_id
-     LEFT JOIN payment_receipts pr ON pr.payment_id = p.id
-     LEFT JOIN refunds rf ON rf.payment_id = p.id
-     WHERE r.customer_id = ?
-     GROUP BY p.id, r.id, pr.id
-     ORDER BY p.paid_at DESC LIMIT 10"
+
+// Notifications
+$notificationStmt = $pdo->prepare(
+    'SELECT id, title, message, created_at FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 5'
 );
-$paymentStmt->execute([$user['id']]);
-$paymentHistory = $paymentStmt->fetchAll();
+$notificationStmt->execute([$user['id']]);
+$notifications = $notificationStmt->fetchAll();
+
+include __DIR__ . '/../../includes/header.php';
 ?>
-<main class="dashboard-page">
-  <div class="dashboard-layout">
+
+<main class="portal-customer-page">
+  <div class="portal-customer-layout">
     <?php include __DIR__ . '/../../includes/customer-sidebar.php'; ?>
 
-    <div class="dashboard-content">
-      <section class="dashboard-hero" id="overview">
-        <div>
-          <p class="eyebrow">Customer dashboard</p>
-          <h1>Good to see you, <?= e($user['name']) ?>.</h1>
-          <p>Keep track of your requests, upcoming trips, and rental history.</p>
+    <div class="customer-main-content">
+      <!-- Top Greeting Banner -->
+      <section class="portal-hero-banner" id="overview">
+        <div class="hero-greeting-content">
+          <span class="eyebrow">Customer Workspace</span>
+          <h1>Good day, <?= e($account['name']) ?></h1>
+          <p>Track your reservations, review trip dispatches, and manage your payments securely.</p>
         </div>
-        <a class="btn btn-coral" href="/vehicles.php">Find a vehicle</a>
+        <a class="portal-btn-primary" href="/vehicles.php" style="white-space:nowrap;">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2"/><circle cx="7" cy="17" r="2"/><path d="M9 17h6"/><circle cx="17" cy="17" r="2"/></svg>
+          <span>Find a Vehicle</span>
+        </a>
       </section>
 
-      <section class="dashboard-section" id="financial-history">
-        <div class="section-head"><div><p class="eyebrow">Financial history</p><h2>Charges and payments</h2></div></div>
-        <?php if (!$financialRecords): ?><div class="empty-state"><p>No charge records yet.</p></div><?php else: ?>
-          <div class="rental-list"><?php foreach ($financialRecords as $record): ?><article class="rental-row"><div class="rental-main"><div><h3><?= e($record['description'] ?: ucfirst(str_replace('_', ' ', $record['charge_type']))) ?></h3><p><?= e($record['reference_number']) ?> · <?= e(date('M j, Y', strtotime($record['created_at']))) ?></p></div></div><div class="rental-meta"><strong>₱<?= number_format((float)$record['amount'], 2) ?></strong><span><?= e(ucfirst(str_replace('_', ' ', $record['charge_type']))) ?></span></div></article><?php endforeach; ?></div>
-        <?php endif; ?>
-      </section>
-
-      <section class="dashboard-section" id="penalty-history">
-        <div class="section-head"><div><p class="eyebrow">Account standing</p><h2>Penalty history</h2></div></div>
-        <?php if (!$penaltyHistory): ?><div class="empty-state"><p>No penalty events recorded.</p></div><?php else: ?>
-          <div class="rental-list"><?php foreach ($penaltyHistory as $penalty): ?><article class="rental-row"><div class="rental-main"><div><h3><?= e(ucfirst(str_replace('_', ' ', $penalty['event_type']))) ?> · <?= (int)$penalty['points'] ?> point<?= (int)$penalty['points'] === 1 ? '' : 's' ?></h3><p><?= e($penalty['reason']) ?></p></div></div><div class="rental-meta"><span><?= e(ucfirst($penalty['status'])) ?></span><span><?= $penalty['expires_at'] ? 'Expires ' . e(date('M j, Y', strtotime($penalty['expires_at']))) : 'No expiry' ?></span></div></article><?php endforeach; ?></div>
-        <?php endif; ?>
-      </section>
-
-      <section class="dashboard-section" id="payment-history">
-        <div class="section-head"><div><p class="eyebrow">Receipts</p><h2>Payment history</h2></div></div>
-        <?php if (!$paymentHistory): ?><div class="empty-state"><p>No payments recorded yet.</p></div><?php else: ?>
-          <div class="rental-list"><?php foreach ($paymentHistory as $payment): ?><article class="rental-row"><div class="rental-main"><div><h3><?= e($payment['receipt_number'] ?: 'Payment') ?></h3><p><?= e($payment['reservation_reference']) ?> · <?= e(ucwords(str_replace('_', ' ', $payment['method']))) ?></p></div></div><div class="rental-meta"><strong>₱<?= number_format((float)$payment['amount'], 2) ?></strong><span><?= e(date('M j, Y', strtotime($payment['paid_at']))) ?></span><?php if ((float)$payment['refunded_amount'] > 0): ?><span>Refunded ₱<?= number_format((float)$payment['refunded_amount'], 2) ?></span><?php endif; ?></div></article><?php endforeach; ?></div>
-        <?php endif; ?>
-      </section>
       <?php if (isset($_GET['requested'])): ?>
-        <p class="note request-success" role="status">Your rental request was submitted successfully. Staff or an administrator will review it before confirmation.</p>
+        <div class="portal-alert-success">
+          <span class="alert-icon" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+          </span>
+          <span><strong>Reservation Submitted:</strong> Your booking request has been received. Our operations staff will verify vehicle availability shortly.</span>
+        </div>
       <?php endif; ?>
-      <?php if ($notifications): ?>
-        <section class="dashboard-section">
-          <div class="section-head"><div><p class="eyebrow">Updates</p><h2>Recent notifications</h2></div></div>
-          <div class="rental-list">
-            <?php foreach ($notifications as $notification): ?>
-              <article class="rental-row">
-                <div class="rental-main"><div><h3><?= e($notification['title']) ?></h3><p><?= e($notification['message']) ?></p></div></div>
-                <div class="rental-meta"><span><?= e(date('M j, Y g:i A', strtotime($notification['created_at']))) ?></span></div>
-              </article>
-            <?php endforeach; ?>
+
+      <!-- 4 Metric KPI Cards -->
+      <section class="portal-kpi-grid" aria-label="Customer quick statistics">
+        <!-- Standing Card -->
+        <a href="/customer/standing.php" class="portal-kpi-card">
+          <div class="kpi-header">
+            <span class="kpi-label">Account Standing</span>
+            <span class="kpi-icon-pill" aria-hidden="true">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            </span>
+          </div>
+          <div class="kpi-value">
+            <span class="portal-badge <?= $standingType === 'good' ? 'badge-success' : ($standingType === 'warning' ? 'badge-warning' : 'badge-danger') ?>">
+              <?= e(ucfirst($standingType)) ?>
+            </span>
+          </div>
+          <div class="kpi-subtext">
+            <span><?= $standingPoints ?> penalty point<?= $standingPoints === 1 ? '' : 's' ?></span>
+            <span>· 12 mo expiry</span>
+          </div>
+        </a>
+
+        <!-- Active Trips Card -->
+        <a href="/customer/my-rentals.php" class="portal-kpi-card">
+          <div class="kpi-header">
+            <span class="kpi-label">Active & Upcoming</span>
+            <span class="kpi-icon-pill" aria-hidden="true">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            </span>
+          </div>
+          <div class="kpi-value"><?= count($activeTrips) ?></div>
+          <div class="kpi-subtext">
+            <span><?= count($ongoingTrips) ?> ongoing</span>
+            <span>· <?= count($upcomingTrips) ?> upcoming</span>
+          </div>
+        </a>
+
+        <!-- Total Paid Card -->
+        <a href="/customer/payments.php" class="portal-kpi-card">
+          <div class="kpi-header">
+            <span class="kpi-label">Settled Payments</span>
+            <span class="kpi-icon-pill" aria-hidden="true">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
+            </span>
+          </div>
+          <div class="kpi-value">₱<?= number_format($lifetimePaid, 2) ?></div>
+          <div class="kpi-subtext">
+            <span>Verified across history</span>
+          </div>
+        </a>
+
+        <!-- Outstanding Balance Card -->
+        <a href="/customer/payments.php" class="portal-kpi-card">
+          <div class="kpi-header">
+            <span class="kpi-label">Outstanding Balance</span>
+            <span class="kpi-icon-pill" aria-hidden="true">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            </span>
+          </div>
+          <div class="kpi-value" style="<?= $totalOutstanding > 0 ? 'color:#e53e3e;' : 'color:#065f46;' ?>">
+            ₱<?= number_format($totalOutstanding, 2) ?>
+          </div>
+          <div class="kpi-subtext">
+            <span><?= $totalOutstanding > 0 ? 'Action required' : 'Paid in full' ?></span>
+          </div>
+        </a>
+      </section>
+
+      <!-- Active Trip Spotlight Card (Hero item if active trip exists) -->
+      <?php if ($spotlightTrip):
+        $spotlightBal = rental_balance($pdo, (int)$spotlightTrip['id'], $spotlightTrip['rental_id'] ? (int)$spotlightTrip['rental_id'] : null);
+        $isPaid = $spotlightBal['outstanding'] <= 0.0001;
+        $isOnline = in_array($spotlightTrip['payment_method'], ['online', 'paymongo', 'paypal'], true);
+        $days = rental_days($spotlightTrip['start_date'], $spotlightTrip['end_date']);
+      ?>
+        <section class="portal-spotlight-card" aria-label="Spotlight trip card">
+          <div class="spotlight-accent-bar"></div>
+          <div class="spotlight-vehicle-media">
+            <img src="<?= e(vehicle_image($spotlightTrip['image'])) ?>" alt="<?= e($spotlightTrip['brand'] . ' ' . $spotlightTrip['model']) ?>" class="spotlight-vehicle-img" loading="lazy">
+            <span class="spotlight-category-tag"><?= e($spotlightTrip['category']) ?></span>
+          </div>
+          <div class="spotlight-content">
+            <div class="spotlight-header-row">
+              <div class="spotlight-title-group">
+                <h3><?= e($spotlightTrip['brand'] . ' ' . $spotlightTrip['model']) ?></h3>
+                <span class="spotlight-reference">Booking Ref: <?= e($spotlightTrip['reference_number']) ?></span>
+              </div>
+              <div class="spotlight-status-group">
+                <span class="portal-badge <?= in_array($spotlightTrip['status'], ['confirmed', 'ongoing'], true) ? 'badge-success' : 'badge-neutral' ?>">
+                  <?= e(ucfirst($spotlightTrip['status'])) ?>
+                </span>
+                <span class="portal-badge <?= $isPaid ? 'badge-success' : ($spotlightTrip['status'] === 'confirmed' ? 'badge-warning' : 'badge-neutral') ?>">
+                  <?= $isPaid ? 'Paid in Full' : 'Payment Due' ?>
+                </span>
+              </div>
+            </div>
+
+            <div class="spotlight-schedule-grid">
+              <div class="spotlight-schedule-item">
+                <dt>Pickup Schedule & Hub</dt>
+                <dd><?= e(date('M j, Y g:i A', strtotime($spotlightTrip['start_date']))) ?></dd>
+                <span style="font-size:0.75rem;color:#64748b;"><?= e($spotlightTrip['pickup_location'] ?: 'Main Hub') ?></span>
+              </div>
+              <div class="spotlight-schedule-item">
+                <dt>Return Schedule & Hub</dt>
+                <dd><?= e(date('M j, Y g:i A', strtotime($spotlightTrip['end_date']))) ?></dd>
+                <span style="font-size:0.75rem;color:#64748b;"><?= e($spotlightTrip['return_location'] ?: 'Main Hub') ?> (<?= $days ?> day<?= $days === 1 ? '' : 's' ?>)</span>
+              </div>
+            </div>
+
+            <div class="spotlight-action-row">
+              <div class="spotlight-pricing">
+                <strong>₱<?= number_format((float)$spotlightTrip['total_amount'], 2) ?></strong>
+                <span>Total Amount · <?= e(ucwords(str_replace('_', ' ', $spotlightTrip['payment_method']))) ?></span>
+              </div>
+              <div class="spotlight-buttons">
+                <?php if ($spotlightTrip['status'] === 'confirmed' && !$isPaid && $isOnline): ?>
+                  <a href="/online-checkout.php?reservation_id=<?= (int)$spotlightTrip['id'] ?>" class="portal-btn-primary" style="height:38px;padding:0 16px;font-size:0.84rem;">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
+                    <span>Pay Online</span>
+                  </a>
+                <?php elseif ($isPaid): ?>
+                  <a href="/customer/rental.php?id=<?= (int)$spotlightTrip['id'] ?>" class="portal-btn-outline" style="height:38px;padding:0 14px;font-size:0.84rem;">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                    <span>View Receipt</span>
+                  </a>
+                <?php endif; ?>
+                <a href="/customer/rental.php?id=<?= (int)$spotlightTrip['id'] ?>" class="portal-btn-outline" style="height:38px;padding:0 14px;font-size:0.84rem;">
+                  <span>Trip Details</span>
+                </a>
+              </div>
+            </div>
           </div>
         </section>
       <?php endif; ?>
 
-      <section class="dashboard-stats" aria-label="Rental summary">
-    <article class="summary-card">
-      <span class="summary-label">Account standing</span>
-      <strong><?= e(ucfirst($standing['standing'])) ?></strong>
-      <span><?= (int)$standing['points'] ?> active point<?= $standing['points'] === 1 ? '' : 's' ?> · each expires after 12 months</span>
-    </article>
-    <article class="summary-card">
-      <span class="summary-label">Active rentals</span>
-      <strong><?= count($active) ?></strong>
-      <span>Pending, confirmed, or ongoing</span>
-    </article>
-    <article class="summary-card">
-      <span class="summary-label">Upcoming trips</span>
-      <strong><?= count($upcoming) ?></strong>
-      <span>Ready for your next journey</span>
-    </article>
-    <article class="summary-card">
-      <span class="summary-label">Recorded payments</span>
-      <strong>₱<?= number_format($paidTotal) ?></strong>
-      <span>Across your rental history</span>
-    </article>
-      </section>
-
-      <section class="dashboard-section" id="rentals">
-        <div class="section-head">
-          <div>
-            <p class="eyebrow">Your rentals</p>
-            <h2>Booking overview</h2>
+      <!-- Recent Bookings Section -->
+      <section class="portal-card" id="rentals">
+        <div class="portal-card-header">
+          <div class="portal-card-title-group">
+            <h2>Recent Bookings & Trips</h2>
+            <p>Your current requests, ongoing rentals, and recent vehicle dispatch history.</p>
           </div>
-          <a class="text-link" href="/customer/my-rentals.php">View all rentals</a>
+          <a href="/customer/my-rentals.php" class="portal-btn-outline" style="height:36px;padding:0 14px;font-size:0.82rem;">
+            <span>View All Bookings (<?= count($allReservations) ?>)</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
+          </a>
         </div>
 
-        <?php if (!$activeRentals): ?>
-          <div class="empty-state">
-            <h3>No active rentals</h3>
-            <p>Submit a request to see its approval and trip status here.</p>
-            <a class="btn btn-navy" href="/vehicles.php">Browse Vehicles</a>
+        <?php if (empty($allReservations)): ?>
+          <div class="portal-empty-card">
+            <span class="portal-empty-icon" aria-hidden="true">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2"/><circle cx="7" cy="17" r="2"/><path d="M9 17h6"/><circle cx="17" cy="17" r="2"/></svg>
+            </span>
+            <h3>No Bookings Recorded</h3>
+            <p>You have not made any vehicle reservations yet. Browse our premium fleet and submit your first rental booking in minutes.</p>
+            <a href="/vehicles.php" class="portal-btn-primary" style="margin-top:8px;">Browse Vehicle Fleet</a>
           </div>
         <?php else: ?>
-          <div class="rental-list">
-            <?php foreach (array_slice($activeRentals, 0, 3) as $rental):
-              $paymentStatus = (float)$rental['paid_amount'] >= (float)$rental['total_amount'] ? 'Paid' : 'Payment pending';
-              $statusClass = in_array($rental['status'], ['confirmed', 'ongoing', 'completed'], true) ? 'status-success' : (in_array($rental['status'], ['cancelled', 'rejected'], true) ? 'status-danger' : 'status-neutral');
-            ?>
-              <article class="rental-row">
-                <div class="rental-main">
-                  <div>
-                    <span class="tag"><?= e($rental['category']) ?></span>
-                    <h3><?= e($rental['brand']) ?> <?= e($rental['model']) ?></h3>
-                    <p><?= e(date('M j, Y', strtotime($rental['start_date']))) ?> – <?= e(date('M j, Y', strtotime($rental['end_date']))) ?></p>
-                  </div>
-                  <div class="rental-statuses">
-                    <span class="status-badge <?= $statusClass ?>"><?= e(ucfirst($rental['status'])) ?></span>
-                    <span class="status-badge <?= $paymentStatus === 'Paid' ? 'status-success' : 'status-neutral' ?>"><?= e($paymentStatus) ?></span>
-                  </div>
-                </div>
-                <div class="rental-meta">
-                  <?php $days = rental_days($rental['start_date'], $rental['end_date']); ?>
-                  <span><?= $days ?> day(s) × ₱<?= number_format((float)$rental['total_amount'] / $days) ?> / day</span>
-                  <strong>₱<?= number_format((float)$rental['total_amount']) ?></strong>
-                  <span>Total amount</span>
-                  <span>Booking #<?= (int)$rental['id'] ?></span>
-                  <a class="text-link rental-detail-link" href="/customer/rental.php?id=<?= (int)$rental['id'] ?>">View details</a>
-                </div>
-              </article>
-            <?php endforeach; ?>
+          <div class="portal-table-container">
+            <table class="portal-table">
+              <thead>
+                <tr>
+                  <th>Vehicle</th>
+                  <th>Booking Ref</th>
+                  <th>Dates & Duration</th>
+                  <th>Total Amount</th>
+                  <th>Booking Status</th>
+                  <th>Payment</th>
+                  <th style="text-align:right;">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                <?php foreach (array_slice($allReservations, 0, 5) as $res):
+                  $resBal = rental_balance($pdo, (int)$res['id'], $res['rental_id'] ? (int)$res['rental_id'] : null);
+                  $resPaid = $resBal['outstanding'] <= 0.0001;
+                  $days = rental_days($res['start_date'], $res['end_date']);
+                  $bookingBadgeClass = match($res['status']) {
+                    'confirmed', 'ongoing', 'completed' => 'badge-success',
+                    'cancelled', 'rejected' => 'badge-danger',
+                    default => 'badge-neutral',
+                  };
+                ?>
+                  <tr>
+                    <td>
+                      <div class="table-vehicle-cell">
+                        <div class="table-vehicle-thumb" style="background-image:url('<?= e(vehicle_image($res['image'])) ?>');"></div>
+                        <div class="table-vehicle-info">
+                          <strong><?= e($res['brand'] . ' ' . $res['model']) ?></strong>
+                          <span><?= e($res['category']) ?></span>
+                        </div>
+                      </div>
+                    </td>
+                    <td><span style="font-family:monospace;font-weight:700;color:#475569;"><?= e($res['reference_number']) ?></span></td>
+                    <td>
+                      <div style="font-size:0.82rem;font-weight:700;color:#0f172a;"><?= e(date('M j', strtotime($res['start_date']))) ?> – <?= e(date('M j, Y', strtotime($res['end_date']))) ?></div>
+                      <span style="font-size:0.74rem;color:#64748b;"><?= $days ?> day<?= $days === 1 ? '' : 's' ?></span>
+                    </td>
+                    <td>
+                      <strong style="font-size:0.92rem;color:#0f172a;">₱<?= number_format((float)$res['total_amount'], 2) ?></strong>
+                    </td>
+                    <td>
+                      <span class="portal-badge <?= $bookingBadgeClass ?>"><?= e(ucfirst($res['status'])) ?></span>
+                    </td>
+                    <td>
+                      <span class="portal-badge <?= $resPaid ? 'badge-success' : ($res['status'] === 'confirmed' ? 'badge-warning' : 'badge-neutral') ?>">
+                        <?= $resPaid ? 'Paid' : 'Pending' ?>
+                      </span>
+                    </td>
+                    <td style="text-align:right;">
+                      <a href="/customer/rental.php?id=<?= (int)$res['id'] ?>" class="portal-btn-outline" style="height:32px;padding:0 12px;font-size:0.78rem;">
+                        <span>Details</span>
+                      </a>
+                    </td>
+                  </tr>
+                <?php endforeach; ?>
+              </tbody>
+            </table>
           </div>
         <?php endif; ?>
       </section>
 
-      <section class="dashboard-account" id="account">
-        <div>
-          <p class="eyebrow">Account</p>
-          <h2>Account settings</h2>
-          <p>Signed in as <strong><?= e($user['email']) ?></strong>. Update your profile, address, and preferred payment method.</p>
+      <!-- Payments & Receipts Section -->
+      <section class="portal-card" id="payment-history">
+        <div class="portal-card-header">
+          <div class="portal-card-title-group">
+            <h2>Payment & Official Receipts Ledger</h2>
+            <p>Verified electronic transaction records, settlement methods, and downloadable VAT-exempt receipts.</p>
+          </div>
+          <a href="/customer/payments.php" class="portal-btn-outline" style="height:36px;padding:0 14px;font-size:0.82rem;">
+            <span>Full Ledger</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
+          </a>
         </div>
-        <a class="btn btn-navy" href="#account-modal">Manage account</a>
+
+        <?php if (empty($paymentHistory)): ?>
+          <div class="portal-empty-card">
+            <span class="portal-empty-icon" aria-hidden="true">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
+            </span>
+            <h3>No Payments Recorded Yet</h3>
+            <p>Once your reservation is confirmed by staff, you can complete settlement online or at vehicle pickup.</p>
+          </div>
+        <?php else: ?>
+          <div class="portal-table-container">
+            <table class="portal-table">
+              <thead>
+                <tr>
+                  <th>Receipt Number</th>
+                  <th>Reservation Ref</th>
+                  <th>Vehicle</th>
+                  <th>Payment Method</th>
+                  <th>Date Settled</th>
+                  <th>Amount Paid</th>
+                  <th style="text-align:right;">Official Receipt</th>
+                </tr>
+              </thead>
+              <tbody>
+                <?php foreach ($paymentHistory as $pay): ?>
+                  <tr>
+                    <td>
+                      <strong style="font-family:monospace;color:#0f172a;"><?= e($pay['receipt_number'] ?: 'RCP-PENDING') ?></strong>
+                    </td>
+                    <td>
+                      <a href="/customer/rental.php?id=<?= (int)$pay['reservation_id'] ?>" style="color:#0f172a;font-weight:700;text-decoration:underline;">
+                        <?= e($pay['reservation_reference']) ?>
+                      </a>
+                    </td>
+                    <td><?= e($pay['brand'] . ' ' . $pay['model']) ?></td>
+                    <td>
+                      <span class="portal-badge badge-neutral">
+                        <?= e(ucwords(str_replace('_', ' ', $pay['method']))) ?>
+                      </span>
+                    </td>
+                    <td><?= e(date('M j, Y g:i A', strtotime($pay['paid_at']))) ?></td>
+                    <td>
+                      <strong style="color:#065f46;">₱<?= number_format((float)$pay['amount'], 2) ?></strong>
+                      <?php if ((float)$pay['refunded_amount'] > 0): ?>
+                        <span style="display:block;font-size:0.72rem;color:#b91c1c;">Refunded ₱<?= number_format((float)$pay['refunded_amount'], 2) ?></span>
+                      <?php endif; ?>
+                    </td>
+                    <td style="text-align:right;">
+                      <a href="/payment-return.php?provider=<?= e($pay['method']) ?>&reservation=<?= (int)$pay['reservation_id'] ?>" class="portal-btn-outline" style="height:32px;padding:0 12px;font-size:0.78rem;">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                        <span>View Receipt</span>
+                      </a>
+                    </td>
+                  </tr>
+                <?php endforeach; ?>
+              </tbody>
+            </table>
+          </div>
+        <?php endif; ?>
       </section>
+
+      <!-- Charges & Incurred Fees Breakdown -->
+      <?php if (!empty($financialRecords)): ?>
+        <section class="portal-card" id="financial-history">
+          <div class="portal-card-header">
+            <div class="portal-card-title-group">
+              <h2>Rental Charges & Assessment Breakdown</h2>
+              <p>Itemized base rental fees, adjustments, and incidental charges recorded by the rental hub.</p>
+            </div>
+          </div>
+          <div class="portal-table-container">
+            <table class="portal-table">
+              <thead>
+                <tr>
+                  <th>Reservation Ref</th>
+                  <th>Charge Category</th>
+                  <th>Description</th>
+                  <th>Assessment Date</th>
+                  <th style="text-align:right;">Charge Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                <?php foreach ($financialRecords as $charge): ?>
+                  <tr>
+                    <td><span style="font-family:monospace;font-weight:700;"><?= e($charge['reference_number']) ?></span></td>
+                    <td>
+                      <span class="portal-badge badge-neutral">
+                        <?= e(ucfirst(str_replace('_', ' ', $charge['charge_type']))) ?>
+                      </span>
+                    </td>
+                    <td><?= e($charge['description'] ?: 'Base rental rate calculation') ?></td>
+                    <td><?= e(date('M j, Y', strtotime($charge['created_at']))) ?></td>
+                    <td style="text-align:right;">
+                      <strong>₱<?= number_format((float)$charge['amount'], 2) ?></strong>
+                    </td>
+                  </tr>
+                <?php endforeach; ?>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      <?php endif; ?>
+
+      <!-- Account Standing & Penalty Log -->
+      <section class="portal-card" id="penalty-history">
+        <div class="portal-card-header">
+          <div class="portal-card-title-group">
+            <h2>Driving Standing & Penalty Log</h2>
+            <p>Transparent record of vehicle usage infractions, penalty points, and policy status.</p>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+            <span class="portal-badge <?= $standingType === 'good' ? 'badge-success' : ($standingType === 'warning' ? 'badge-warning' : 'badge-danger') ?>" style="padding:6px 14px;font-size:0.82rem;">
+              <?= e(ucfirst($standingType)) ?> Standing (<?= $standingPoints ?> Point<?= $standingPoints === 1 ? '' : 's' ?>)
+            </span>
+            <a href="/customer/standing.php" class="portal-btn-outline" style="height:36px;padding:0 14px;font-size:0.82rem;">
+              <span>Policy & Infractions</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
+            </a>
+          </div>
+        </div>
+
+        <!-- Standing Guidelines Banner -->
+        <div class="standing-guidelines-banner">
+          <div>
+            <strong style="display:block;font-size:0.84rem;color:#0f172a;margin-bottom:2px;">VELO Vehicle Fleet Access Policy</strong>
+            <span style="font-size:0.78rem;color:#64748b;">Points automatically expire 12 months after the incident date.</span>
+          </div>
+          <div class="standing-tier-list">
+            <div class="standing-tier-item">
+              <span class="standing-tier-dot tier-good"></span>
+              <span><strong>0–2 Pts:</strong> Good (Full fleet access)</span>
+            </div>
+            <div class="standing-tier-item">
+              <span class="standing-tier-dot tier-warning"></span>
+              <span><strong>3–4 Pts:</strong> Warning (Prepayment required)</span>
+            </div>
+            <div class="standing-tier-item">
+              <span class="standing-tier-dot tier-restricted"></span>
+              <span><strong>5+ Pts:</strong> Restricted (Reservations suspended)</span>
+            </div>
+          </div>
+        </div>
+
+        <?php if (empty($penaltyHistory)): ?>
+          <div class="portal-empty-card" style="padding:32px 24px;">
+            <span class="portal-empty-icon" style="background:#ecfdf5;color:#059669;" aria-hidden="true">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+            </span>
+            <h3>Clean Driving Record</h3>
+            <p>You have zero penalty points on file. Continue returning vehicles on time and maintaining vehicle care to ensure uninhibited reservation approval.</p>
+          </div>
+        <?php else: ?>
+          <div class="portal-table-container">
+            <table class="portal-table">
+              <thead>
+                <tr>
+                  <th>Event Category</th>
+                  <th>Points Assessed</th>
+                  <th>Reason / Particulars</th>
+                  <th>Status</th>
+                  <th>Date Logged</th>
+                  <th>Expiration Date</th>
+                </tr>
+              </thead>
+              <tbody>
+                <?php foreach ($penaltyHistory as $penalty): ?>
+                  <tr>
+                    <td>
+                      <strong><?= e(ucfirst(str_replace('_', ' ', $penalty['event_type']))) ?></strong>
+                    </td>
+                    <td>
+                      <span class="portal-badge badge-danger">+<?= (int)$penalty['points'] ?> pt<?= (int)$penalty['points'] === 1 ? '' : 's' ?></span>
+                    </td>
+                    <td><?= e($penalty['reason']) ?></td>
+                    <td>
+                      <span class="portal-badge <?= $penalty['status'] === 'approved' ? 'badge-warning' : 'badge-neutral' ?>">
+                        <?= e(ucfirst($penalty['status'])) ?>
+                      </span>
+                    </td>
+                    <td><?= e(date('M j, Y', strtotime($penalty['created_at']))) ?></td>
+                    <td>
+                      <?= $penalty['expires_at'] ? e(date('M j, Y', strtotime($penalty['expires_at']))) : 'No Expiry' ?>
+                    </td>
+                  </tr>
+                <?php endforeach; ?>
+              </tbody>
+            </table>
+          </div>
+        <?php endif; ?>
+      </section>
+
+      <!-- Notifications & Updates Feed -->
+      <?php if (!empty($notifications)): ?>
+        <section class="portal-card">
+          <div class="portal-card-header">
+            <div class="portal-card-title-group">
+              <h2>Important Account Notifications</h2>
+              <p>System announcements, reservation approvals, and transaction receipts.</p>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:12px;">
+            <?php foreach ($notifications as $notif): ?>
+              <div style="padding:14px 16px;background:#f8fafc;border-radius:10px;border:1px solid #f1f5f9;display:flex;justify-content:space-between;align-items:flex-start;gap:16px;">
+                <div>
+                  <strong style="display:block;font-size:0.9rem;color:#0f172a;margin-bottom:3px;"><?= e($notif['title']) ?></strong>
+                  <p style="margin:0;font-size:0.84rem;color:#475569;"><?= e($notif['message']) ?></p>
+                </div>
+                <span style="font-size:0.75rem;color:#94a3b8;white-space:nowrap;"><?= e(date('M j, g:i A', strtotime($notif['created_at']))) ?></span>
+              </div>
+            <?php endforeach; ?>
+          </div>
+        </section>
+      <?php endif; ?>
     </div>
   </div>
-  <div class="account-modal" id="account-modal" role="dialog" aria-modal="true" aria-labelledby="account-modal-title">
-    <a class="account-modal-backdrop" href="#overview" aria-label="Close account settings"></a>
-    <section class="account-modal-card">
-      <a class="account-modal-close" href="#overview" aria-label="Close account settings">×</a>
-      <p class="eyebrow">Customer account</p>
-      <h2 id="account-modal-title">Manage account</h2>
-      <p class="modal-intro">Update your contact details and preferred payment method.</p>
-      <?php if ($accountMessage): ?><p class="note request-success"><?= e($accountMessage) ?></p><?php endif; ?>
-      <?php if ($accountError): ?><p class="form-error"><?= e($accountError) ?></p><?php endif; ?>
-      <form class="detail-form" method="post">
-        <input type="hidden" name="action" value="update_account">
-        <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
-        <div class="account-profile-preview">
-          <div class="account-avatar" style="<?= $account['profile_image'] ? 'background-image:url(' . e($account['profile_image']) . ')' : '' ?>"><?php if (!$account['profile_image']): ?><?= e(strtoupper(substr($account['name'], 0, 1))) ?><?php endif; ?></div>
-          <div><strong><?= e($account['name']) ?></strong><span>Customer profile</span></div>
-        </div>
-        <div class="modal-form-grid">
-          <label>Full name<input type="text" name="name" value="<?= e($account['name']) ?>" required></label>
-          <label>Email address<input type="email" name="email" value="<?= e($account['email']) ?>" required></label>
-          <label>Phone number<input type="tel" name="phone" value="<?= e($account['phone']) ?>" placeholder="+63 900 000 0000"></label>
-          <label>Preferred payment<select name="preferred_payment_method"><option value="">No preference</option><?php foreach (['cash', 'bank_transfer', 'gcash', 'card'] as $method): ?><option value="<?= $method ?>" <?= $account['preferred_payment_method'] === $method ? 'selected' : '' ?>><?= ucfirst($method) ?></option><?php endforeach; ?></select></label>
-        </div>
-        <label>Address<textarea name="address" rows="2" placeholder="Your pickup or billing address"><?= e($account['address']) ?></textarea></label>
-        <label>Profile image URL<input type="url" name="profile_image" value="<?= e($account['profile_image']) ?>" placeholder="https://example.com/profile.jpg"></label>
-        <button class="btn btn-coral" type="submit">Save account details</button>
-      </form>
-    </section>
-  </div>
 </main>
+
 <?php include __DIR__ . '/../../includes/footer.php'; ?>

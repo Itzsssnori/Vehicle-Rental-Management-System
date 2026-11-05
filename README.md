@@ -149,6 +149,42 @@ The backend records rental status changes in `rental_status_history`, operationa
 and when staff or administrators review rentals, process payments, manage vehicles, or
 manage maintenance.
 
+### Local online payment configuration
+
+The local VELO installation uses a provider-neutral `Online Payment` checkout for
+testing the reservation, payment, receipt, and balance workflows without real
+financial transactions or third-party credentials. Customers can also choose cash
+at pickup or a manually verified bank transfer.
+
+Apply both additive payment migrations after importing the main schema:
+
+```bash
+/opt/lampp/bin/mysql -h 127.0.0.1 -P 3306 -u vrms -p vrms \
+  < database/migrations/001_online_payment_attempts.sql
+
+/opt/lampp/bin/mysql -h 127.0.0.1 -P 3306 -u vrms -p vrms \
+  < database/migrations/002_online_checkout_method.sql
+```
+
+The local checkout flow works without payment-provider credentials:
+
+```text
+APP_URL=http://vrms.local
+```
+
+After a staff member approves a reservation, the customer opens the reservation
+details and selects `Continue to Online Payment`. The local checkout then records
+the payment, issues a receipt, and updates the reservation balance.
+
+The payment tables are intentionally retained so the same workflow can later be
+connected to a hosted provider without redesigning reservations, payments, receipts,
+refunds, or adjustments.
+
+PayMongo and PayPal adapters are included as optional future integrations. They
+require provider credentials, verified webhooks, and a public HTTPS endpoint; they
+are not required for the local academic installation.
+
+
 ## PHP built-in development server
 
 Apache/XAMPP is the recommended supported setup. For quick local testing without XAMPP, run this from the project root:

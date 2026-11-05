@@ -68,8 +68,25 @@ $stmt->execute($params);
 $vehicles = $stmt->fetchAll();
 ?>
 
-<main class="<?= $customerView ? 'dashboard-page customer-catalog-page' : 'catalog-page' ?>">
-  <?php if ($customerView): ?><div class="dashboard-layout catalog-dashboard-layout"><?php include __DIR__ . '/../includes/customer-sidebar.php'; ?><div class="catalog-main"><?php endif; ?>
+<?php if ($customerView): ?>
+<main class="portal-customer-page">
+  <div class="portal-customer-layout">
+    <?php include __DIR__ . '/../includes/customer-sidebar.php'; ?>
+    <div class="customer-main-content">
+      <section class="portal-hero-banner">
+        <div class="hero-greeting-content">
+          <span class="eyebrow">Fleet Discovery</span>
+          <h1>Browse Vehicle Fleet</h1>
+          <p>Compare premium vehicles, inspect specifications, check operational availability, and reserve in minutes.</p>
+        </div>
+        <span class="portal-badge badge-neutral" style="font-size:0.84rem;padding:6px 14px;background:rgba(255,255,255,0.12);color:#ffffff;border:1px solid rgba(255,255,255,0.22);white-space:nowrap;">
+          <?= $totalVehicles ?> vehicles operational
+        </span>
+      </section>
+
+      <section class="portal-card" style="padding:20px;">
+<?php else: ?>
+<main class="catalog-page">
   <section class="catalog-hero">
     <div>
       <p class="eyebrow">Fleet catalog</p>
@@ -80,6 +97,7 @@ $vehicles = $stmt->fetchAll();
   </section>
 
   <section class="catalog-content">
+<?php endif; ?>
 
   <form class="portal-filter-card" method="get">
     <input type="hidden" name="start" value="<?= e($start) ?>">
@@ -212,7 +230,12 @@ $vehicles = $stmt->fetchAll();
     </nav>
   <?php endif; ?>
   </section>
-  <?php if ($customerView): ?></div></div><?php endif; ?>
-</main>
+  <?php if ($customerView): ?>
+      </div>
+    </div>
+  </main>
+  <?php else: ?>
+  </main>
+  <?php endif; ?>
 
 <?php include __DIR__ . '/../includes/footer.php'; ?>

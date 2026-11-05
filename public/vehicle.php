@@ -55,7 +55,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $error = 'Your account standing is currently not eligible to create new reservations.';
   } elseif ($purpose === '') {
     $error = 'Enter the purpose of this rental.';
-  } elseif (!in_array($paymentMethod, ['cash', 'bank_transfer', 'gcash', 'card'], true)) {
+  } elseif (!in_array($paymentMethod, ['cash', 'bank_transfer', 'online', 'paymongo', 'paypal'], true)) {
     $error = 'Choose a valid payment method for this rental request.';
   } elseif (($vehicle['status'] ?? '') !== 'operational') {
     $error = 'This vehicle is not currently available for rental.';
@@ -466,8 +466,7 @@ include __DIR__ . '/../includes/header.php';
                 <option value="">Select Payment Method</option>
                 <option value="cash" <?= ($_POST['payment_method'] ?? '') === 'cash' ? 'selected' : '' ?>>Cash / In Person at Pickup</option>
                 <option value="bank_transfer" <?= ($_POST['payment_method'] ?? '') === 'bank_transfer' ? 'selected' : '' ?>>Bank Transfer</option>
-                <option value="gcash" <?= ($_POST['payment_method'] ?? '') === 'gcash' ? 'selected' : '' ?>>GCash</option>
-                <option value="card" <?= ($_POST['payment_method'] ?? '') === 'card' ? 'selected' : '' ?>>Credit / Debit Card</option>
+                <option value="online" <?= ($_POST['payment_method'] ?? '') === 'online' ? 'selected' : '' ?>>Online Payment</option>
               </select>
             </div>
 

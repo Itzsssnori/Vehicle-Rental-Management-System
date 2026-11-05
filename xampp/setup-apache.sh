@@ -41,6 +41,10 @@ if ! grep -Fq 'ServerName vrms.local' "$VHOSTS_CONF"; then
 EOF
 fi
 
+if ! grep -Fq 'IncludeOptional "/opt/lampp/etc/extra/vrms-secrets.conf"' "$VHOSTS_CONF"; then
+    "$SUDO" sed -i '1i IncludeOptional "/opt/lampp/etc/extra/vrms-secrets.conf"' "$VHOSTS_CONF"
+fi
+
 if ! grep -Eq '^[[:space:]]*127\.0\.0\.1[[:space:]]+vrms\.local([[:space:]]|$)' "$HOSTS_FILE"; then
     printf '127.0.0.1 vrms.local\n' | "$SUDO" tee -a "$HOSTS_FILE" >/dev/null
 fi
