@@ -129,7 +129,11 @@ DB_PASS=vrms123
 
 These values can be supplied as Apache/PHP environment variables, or you can update the local values in [config.php](config.php). For a real deployment, use a dedicated database user and a password that is not committed to Git.
 
-After importing the fresh schema, create your demo accounts again:
+After importing the fresh schema, create your demo administrator account again.
+Public registration creates customer accounts through `users`, `roles`, and
+`user_roles`. Staff and administrator accounts must be created by an
+administrator or through the CLI utility; public registration cannot assign
+privileged roles:
 
 ```bash
 sudo /opt/lampp/bin/php database/create-account.php \
@@ -173,11 +177,36 @@ php database/create-account.php --name="Full Name" --email="user@example.com" --
 php public/admin/seed_vehicles.php
 ```
 
-The vehicle seeder retrieves image URLs from Wikimedia Commons. Run it with the same PHP binary and database environment used by XAMPP:
+The vehicle seeder retrieves image URLs from Pexels. Configure the API key
+only in the server environment; never commit it to source control:
+
+```bash
+export PEXELS_API_KEY="your-server-side-key"
+```
+
+For a classroom/demo presentation without an API key, the seeder uses one
+generic Pexels-hosted fallback image. You can override it with:
+
+```bash
+export PEXELS_DEMO_IMAGE="https://images.pexels.com/..."
+```
+
+Run it with the same PHP binary and database environment used by XAMPP:
 
 ```bash
 sudo /opt/lampp/bin/php public/admin/seed_vehicles.php
 ```
 
-The command reports vehicles for which no image was found and uses the bundled placeholder for those records. If every vehicle uses the placeholder, check that XAMPP PHP has outbound HTTPS access and that the machine is connected to the internet.
+The command reports vehicles for which no Pexels image was found. Existing
+image URLs are preserved, and new records use the bundled placeholder. Pexels
+images should be reviewed for project licensing and attribution requirements.
+
+## Authentication demo
+
+Customer registration now requires email verification before login or
+reservation. Password reset and verification links are logged by PHP and
+shown as a demo link on the confirmation page, so the complete flow works
+without configuring an external mail provider. For a deployed system, replace
+the demo delivery function with authenticated SMTP or a transactional mail
+service and remove the demo link display.
 # Vehicle-Rental-Management-System

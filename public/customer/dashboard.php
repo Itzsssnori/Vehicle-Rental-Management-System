@@ -5,6 +5,7 @@ $user = require_customer();
 $accountStmt = db()->prepare('SELECT name, email, phone, address, profile_image, preferred_payment_method FROM users WHERE id = ?');
 $accountStmt->execute([$user['id']]);
 $account = $accountStmt->fetch();
+$standing = customer_standing(db(), (int)$user['id']);
 $accountMessage = '';
 $accountError = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'update_account') {
@@ -15,7 +16,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'updat
     $address = trim($_POST['address'] ?? '');
     $profileImage = trim($_POST['profile_image'] ?? '');
     $paymentMethod = $_POST['preferred_payment_method'] ?? '';
-    if ($name === '' || !filter_var($email, FILTER_VALIDATE_EMAIL) || !in_array($paymentMethod, ['', 'cash', 'gcash', 'card'], true)) {
+    if ($name === '' || !filter_var($email, FILTER_VALIDATE_EMAIL) || !in_array($paymentMethod, ['', 'cash', 'bank_transfer', 'gcash', 'card'], true)) {
         $accountError = 'Enter a valid name, email, and payment method.';
     } else {
         $duplicate = db()->prepare('SELECT id FROM users WHERE email = ? AND id <> ? LIMIT 1');
@@ -44,15 +45,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'updat
 include __DIR__ . '/../../includes/header.php';
 
 $stmt = db()->prepare(
-    "SELECT r.id, r.start_date, r.end_date, r.actual_return, r.total_amount, r.status,
-            v.brand, v.model, v.category, v.image,
+    "SELECT r.id, r.requested_pickup_at AS start_date, r.requested_return_at AS end_date,
+            NULL AS actual_return, r.total_amount, r.status,
+            v.brand, v.model, c.name AS category, v.image,
             COALESCE(SUM(p.amount), 0) AS paid_amount
-     FROM rentals r
+     FROM reservations r
      INNER JOIN vehicles v ON v.id = r.vehicle_id
-     LEFT JOIN payments p ON p.rental_id = r.id
-     WHERE r.user_id = ?
-     GROUP BY r.id, v.id
-     ORDER BY r.start_date DESC, r.created_at DESC"
+     INNER JOIN vehicle_categories c ON c.id = v.category_id
+     LEFT JOIN rentals rt ON rt.reservation_id = r.id
+     LEFT JOIN payments p ON p.reservation_id = r.id OR p.rental_id = rt.id
+     WHERE r.customer_id = ?
+     GROUP BY r.id, rt.id, v.id, c.id
+     ORDER BY r.requested_pickup_at DESC, r.created_at DESC"
 );
 $stmt->execute([$user['id']]);
 $rentals = $stmt->fetchAll();
@@ -76,6 +80,40 @@ $notificationStmt = db()->prepare(
 );
 $notificationStmt->execute([$user['id']]);
 $notifications = $notificationStmt->fetchAll();
+$financialStmt = db()->prepare(
+    "SELECT r.reference_number, rc.charge_type, rc.description, rc.amount, rc.created_at,
+            COALESCE(SUM(DISTINCT p.amount), 0) AS paid_amount
+     FROM reservations r
+     LEFT JOIN rentals rt ON rt.reservation_id = r.id
+     INNER JOIN rental_charges rc ON rc.reservation_id = r.id OR rc.rental_id = rt.id
+     LEFT JOIN payments p ON p.reservation_id = r.id OR p.rental_id = rt.id
+     WHERE r.customer_id = ?
+     GROUP BY rc.id, r.id, rt.id
+     ORDER BY rc.created_at DESC
+     LIMIT 10"
+);
+$financialStmt->execute([$user['id']]);
+$financialRecords = $financialStmt->fetchAll();
+$penaltyStmt = db()->prepare(
+    "SELECT event_type, points, reason, status, expires_at, created_at
+     FROM penalty_events WHERE user_id = ? ORDER BY created_at DESC LIMIT 10"
+);
+$penaltyStmt->execute([$user['id']]);
+$penaltyHistory = $penaltyStmt->fetchAll();
+$paymentStmt = db()->prepare(
+    "SELECT p.amount, p.method, p.reference_number, p.paid_at, pr.receipt_number,
+            r.reference_number AS reservation_reference,
+            COALESCE(SUM(rf.amount), 0) AS refunded_amount
+     FROM payments p
+     INNER JOIN reservations r ON r.id = p.reservation_id
+     LEFT JOIN payment_receipts pr ON pr.payment_id = p.id
+     LEFT JOIN refunds rf ON rf.payment_id = p.id
+     WHERE r.customer_id = ?
+     GROUP BY p.id, r.id, pr.id
+     ORDER BY p.paid_at DESC LIMIT 10"
+);
+$paymentStmt->execute([$user['id']]);
+$paymentHistory = $paymentStmt->fetchAll();
 ?>
 <main class="dashboard-page">
   <div class="dashboard-layout">
@@ -89,6 +127,27 @@ $notifications = $notificationStmt->fetchAll();
           <p>Keep track of your requests, upcoming trips, and rental history.</p>
         </div>
         <a class="btn btn-coral" href="/vehicles.php">Find a vehicle</a>
+      </section>
+
+      <section class="dashboard-section" id="financial-history">
+        <div class="section-head"><div><p class="eyebrow">Financial history</p><h2>Charges and payments</h2></div></div>
+        <?php if (!$financialRecords): ?><div class="empty-state"><p>No charge records yet.</p></div><?php else: ?>
+          <div class="rental-list"><?php foreach ($financialRecords as $record): ?><article class="rental-row"><div class="rental-main"><div><h3><?= e($record['description'] ?: ucfirst(str_replace('_', ' ', $record['charge_type']))) ?></h3><p><?= e($record['reference_number']) ?> · <?= e(date('M j, Y', strtotime($record['created_at']))) ?></p></div></div><div class="rental-meta"><strong>₱<?= number_format((float)$record['amount'], 2) ?></strong><span><?= e(ucfirst(str_replace('_', ' ', $record['charge_type']))) ?></span></div></article><?php endforeach; ?></div>
+        <?php endif; ?>
+      </section>
+
+      <section class="dashboard-section" id="penalty-history">
+        <div class="section-head"><div><p class="eyebrow">Account standing</p><h2>Penalty history</h2></div></div>
+        <?php if (!$penaltyHistory): ?><div class="empty-state"><p>No penalty events recorded.</p></div><?php else: ?>
+          <div class="rental-list"><?php foreach ($penaltyHistory as $penalty): ?><article class="rental-row"><div class="rental-main"><div><h3><?= e(ucfirst(str_replace('_', ' ', $penalty['event_type']))) ?> · <?= (int)$penalty['points'] ?> point<?= (int)$penalty['points'] === 1 ? '' : 's' ?></h3><p><?= e($penalty['reason']) ?></p></div></div><div class="rental-meta"><span><?= e(ucfirst($penalty['status'])) ?></span><span><?= $penalty['expires_at'] ? 'Expires ' . e(date('M j, Y', strtotime($penalty['expires_at']))) : 'No expiry' ?></span></div></article><?php endforeach; ?></div>
+        <?php endif; ?>
+      </section>
+
+      <section class="dashboard-section" id="payment-history">
+        <div class="section-head"><div><p class="eyebrow">Receipts</p><h2>Payment history</h2></div></div>
+        <?php if (!$paymentHistory): ?><div class="empty-state"><p>No payments recorded yet.</p></div><?php else: ?>
+          <div class="rental-list"><?php foreach ($paymentHistory as $payment): ?><article class="rental-row"><div class="rental-main"><div><h3><?= e($payment['receipt_number'] ?: 'Payment') ?></h3><p><?= e($payment['reservation_reference']) ?> · <?= e(ucwords(str_replace('_', ' ', $payment['method']))) ?></p></div></div><div class="rental-meta"><strong>₱<?= number_format((float)$payment['amount'], 2) ?></strong><span><?= e(date('M j, Y', strtotime($payment['paid_at']))) ?></span><?php if ((float)$payment['refunded_amount'] > 0): ?><span>Refunded ₱<?= number_format((float)$payment['refunded_amount'], 2) ?></span><?php endif; ?></div></article><?php endforeach; ?></div>
+        <?php endif; ?>
       </section>
       <?php if (isset($_GET['requested'])): ?>
         <p class="note request-success" role="status">Your rental request was submitted successfully. Staff or an administrator will review it before confirmation.</p>
@@ -108,6 +167,11 @@ $notifications = $notificationStmt->fetchAll();
       <?php endif; ?>
 
       <section class="dashboard-stats" aria-label="Rental summary">
+    <article class="summary-card">
+      <span class="summary-label">Account standing</span>
+      <strong><?= e(ucfirst($standing['standing'])) ?></strong>
+      <span><?= (int)$standing['points'] ?> active point<?= $standing['points'] === 1 ? '' : 's' ?> · each expires after 12 months</span>
+    </article>
     <article class="summary-card">
       <span class="summary-label">Active rentals</span>
       <strong><?= count($active) ?></strong>
@@ -202,7 +266,7 @@ $notifications = $notificationStmt->fetchAll();
           <label>Full name<input type="text" name="name" value="<?= e($account['name']) ?>" required></label>
           <label>Email address<input type="email" name="email" value="<?= e($account['email']) ?>" required></label>
           <label>Phone number<input type="tel" name="phone" value="<?= e($account['phone']) ?>" placeholder="+63 900 000 0000"></label>
-          <label>Preferred payment<select name="preferred_payment_method"><option value="">No preference</option><?php foreach (['cash', 'gcash', 'card'] as $method): ?><option value="<?= $method ?>" <?= $account['preferred_payment_method'] === $method ? 'selected' : '' ?>><?= ucfirst($method) ?></option><?php endforeach; ?></select></label>
+          <label>Preferred payment<select name="preferred_payment_method"><option value="">No preference</option><?php foreach (['cash', 'bank_transfer', 'gcash', 'card'] as $method): ?><option value="<?= $method ?>" <?= $account['preferred_payment_method'] === $method ? 'selected' : '' ?>><?= ucfirst($method) ?></option><?php endforeach; ?></select></label>
         </div>
         <label>Address<textarea name="address" rows="2" placeholder="Your pickup or billing address"><?= e($account['address']) ?></textarea></label>
         <label>Profile image URL<input type="url" name="profile_image" value="<?= e($account['profile_image']) ?>" placeholder="https://example.com/profile.jpg"></label>

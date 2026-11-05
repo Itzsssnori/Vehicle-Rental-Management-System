@@ -25,7 +25,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!filter_var($email, FILTER_VALIDATE_EMAIL) || $password === '') {
         $error = 'Enter a valid email address and password.';
     } else {
-        $stmt = db()->prepare('SELECT id, name, email, password_hash, role, account_status FROM users WHERE email = ? LIMIT 1');
+        $stmt = db()->prepare(
+            "SELECT u.id, u.name, u.email, u.password_hash, u.email_verified_at, u.account_status, r.name AS role
+             FROM users u
+             INNER JOIN user_roles ur ON ur.user_id = u.id
+             INNER JOIN roles r ON r.id = ur.role_id
+             WHERE u.email = ?
+             ORDER BY CASE r.name WHEN 'admin' THEN 1 WHEN 'staff' THEN 2 ELSE 3 END
+             LIMIT 1"
+        );
         $stmt->execute([$email]);
         $user = $stmt->fetch();
 
@@ -35,6 +43,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $error = 'Your faculty/staff registration is waiting for administrator approval.';
         } elseif ($user['account_status'] === 'rejected') {
             $error = 'Your faculty/staff registration was not approved. Please contact an administrator.';
+        } elseif (empty($user['email_verified_at'])) {
+            $error = 'Please verify your email address before logging in.';
         } else {
             session_regenerate_id(true);
             unset($user['password_hash']);
@@ -70,11 +80,16 @@ include __DIR__ . '/../includes/header.php';
       </label>
       <label>
         Password
-        <input type="password" name="password" autocomplete="current-password" required>
+        <span class="password-field">
+          <input id="login-password" type="password" name="password" autocomplete="current-password" required>
+          <button class="password-toggle" type="button" data-password-toggle="login-password" aria-controls="login-password" aria-pressed="false">Show</button>
+        </span>
       </label>
       <button class="btn btn-coral" type="submit">Log in</button>
     </form>
 
+    <p class="auth-footnote"><a href="/forgot-password.php">Forgot password?</a></p>
+    <p class="auth-footnote">Did not receive verification? <a href="/resend-verification.php">Resend verification email</a></p>
     <p class="auth-footnote">New to VELO? <a href="/register.php">Create a customer account</a></p>
   </section>
 </main>

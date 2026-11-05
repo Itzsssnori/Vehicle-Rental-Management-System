@@ -10,7 +10,7 @@ $success = '';
 
 $vehicle = null;
 if ($id > 0) {
-  $stmt = db()->prepare('SELECT * FROM vehicles WHERE id = ?');
+  $stmt = db()->prepare('SELECT v.*, c.name AS category FROM vehicles v INNER JOIN vehicle_categories c ON c.id = v.category_id WHERE v.id = ?');
   $stmt->execute([$id]);
   $vehicle = $stmt->fetch();
 }
@@ -35,23 +35,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     header('Location: /login.php?redirect=' . rawurlencode('/vehicle.php?id=' . $id));
     exit;
   }
-  if ($purpose === '') {
+  if (!customer_can_reserve(db(), (int)current_user()['id'])) {
+    $error = 'Your account is currently not eligible to create new reservations.';
+  } elseif ($purpose === '') {
     $error = 'Enter the purpose of this rental.';
-  } elseif (!in_array($paymentMethod, ['cash', 'gcash', 'card'], true)) {
+  } elseif (!in_array($paymentMethod, ['cash', 'bank_transfer', 'gcash', 'card'], true)) {
     $error = 'Choose a payment method for this rental request.';
   } elseif (($vehicle['status'] ?? '') !== 'operational') {
     $error = 'This vehicle is not currently available for rental.';
   } elseif (!$validFormat || $start < $today || $end < $start) {
     $error = 'Choose valid rental dates. The return date must be on or after the pickup date.';
   } else {
+    $pickupAt = $start . ' 09:00:00';
+    $returnAt = $end . ' 17:00:00';
     $conflict = db()->prepare(
-      "SELECT COUNT(*) FROM rentals
+      "SELECT COUNT(*) FROM reservations
        WHERE vehicle_id = ?
-         AND status IN ('pending', 'confirmed', 'ongoing')
-         AND start_date <= ?
-         AND end_date >= ?"
+         AND status IN ('pending', 'confirmed')
+         AND requested_pickup_at < ?
+         AND requested_return_at > ?"
     );
-    $conflict->execute([$id, $end, $start]);
+    $conflict->execute([$id, $returnAt, $pickupAt]);
 
     $maintenance = db()->prepare(
       "SELECT COUNT(*) FROM maintenance
@@ -71,19 +75,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       $pdo = db();
       $pdo->beginTransaction();
       try {
+        $locationId = (int)$pdo->query("SELECT id FROM locations WHERE status = 'active' ORDER BY id LIMIT 1")->fetchColumn();
+        if (!$locationId) {
+          throw new RuntimeException('No active pickup location is configured.');
+        }
+        $reference = 'RES-' . strtoupper(bin2hex(random_bytes(5)));
         $insert = $pdo->prepare(
-          "INSERT INTO rentals (user_id, vehicle_id, start_date, end_date, total_amount, payment_method, purpose, status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')"
+          "INSERT INTO reservations
+           (reference_number, customer_id, vehicle_id, pickup_location_id, return_location_id,
+            requested_pickup_at, requested_return_at, base_amount, total_amount, payment_method, purpose)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         );
-        $insert->execute([current_user()['id'], $id, $start, $end, $total, $paymentMethod, $purpose]);
-        $rentalId = (int)$pdo->lastInsertId();
-        record_rental_status($pdo, $rentalId, null, 'pending');
+        $insert->execute([$reference, current_user()['id'], $id, $locationId, $locationId, $pickupAt, $returnAt, $total, $total, $paymentMethod, $purpose]);
+        $reservationId = (int)$pdo->lastInsertId();
+        record_reservation_status($pdo, $reservationId, null, 'pending');
         $charge = $pdo->prepare(
-          "INSERT INTO rental_charges (rental_id, charge_type, description, quantity, unit_price, amount)
+          "INSERT INTO rental_charges (reservation_id, charge_type, description, quantity, unit_price, amount)
            VALUES (?, 'rental', 'Base rental charge', ?, ?, ?)"
         );
-        $charge->execute([$rentalId, $days, $vehicle['daily_rate'], $total]);
-        write_audit($pdo, (int)current_user()['id'], 'rental_created', 'rentals', $rentalId, 'Customer submitted a rental request.');
+        $charge->execute([$reservationId, $days, $vehicle['daily_rate'], $total]);
+        write_audit($pdo, (int)current_user()['id'], 'reservation_created', 'reservations', $reservationId, 'Customer submitted a reservation request.');
         $pdo->commit();
       } catch (Throwable $exception) {
         if ($pdo->inTransaction()) {
@@ -91,7 +102,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         throw $exception;
       }
-      header('Location: /customer/dashboard.php?requested=' . $rentalId);
+      header('Location: /customer/dashboard.php?requested=' . $reservationId);
       exit;
     }
   }
@@ -105,19 +116,19 @@ $availableForDates = ($vehicle['status'] ?? '') === 'operational';
 if ($availableForDates && $validLookupDates) {
   $availability = db()->prepare(
     "SELECT
-       (SELECT COUNT(*) FROM rentals
+       (SELECT COUNT(*) FROM reservations
         WHERE vehicle_id = ?
-          AND status IN ('pending', 'confirmed', 'ongoing')
-          AND start_date <= ?
-          AND end_date >= ?) AS rental_conflicts,
+          AND status IN ('pending', 'confirmed')
+          AND requested_pickup_at < ?
+          AND requested_return_at > ?) AS reservation_conflicts,
        (SELECT COUNT(*) FROM maintenance
         WHERE vehicle_id = ?
           AND start_date <= ?
           AND (end_date IS NULL OR end_date >= ?)) AS maintenance_conflicts"
   );
-  $availability->execute([$id, $end, $start, $id, $end, $start]);
+  $availability->execute([$id, $end . ' 17:00:00', $start . ' 09:00:00', $id, $end, $start]);
   $availability = $availability->fetch();
-  $availableForDates = (int)$availability['rental_conflicts'] === 0
+  $availableForDates = (int)$availability['reservation_conflicts'] === 0
     && (int)$availability['maintenance_conflicts'] === 0;
 }
 
@@ -188,7 +199,8 @@ include __DIR__ . '/../includes/header.php';
           Preferred payment method
           <select name="payment_method" required>
             <option value="">Choose a method</option>
-            <option value="cash" <?= ($_POST['payment_method'] ?? '') === 'cash' ? 'selected' : '' ?>>Cash</option>
+            <option value="cash" <?= ($_POST['payment_method'] ?? '') === 'cash' ? 'selected' : '' ?>>Cash / in person</option>
+            <option value="bank_transfer" <?= ($_POST['payment_method'] ?? '') === 'bank_transfer' ? 'selected' : '' ?>>Bank transfer</option>
             <option value="gcash" <?= ($_POST['payment_method'] ?? '') === 'gcash' ? 'selected' : '' ?>>GCash</option>
             <option value="card" <?= ($_POST['payment_method'] ?? '') === 'card' ? 'selected' : '' ?>>Card</option>
           </select>

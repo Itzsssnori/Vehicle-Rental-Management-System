@@ -14,10 +14,10 @@ $page = max(1, (int)($_GET['page'] ?? 1));
 $perPage = 6;
 $validDates = preg_match('/^\d{4}-\d{2}-\d{2}$/', $start) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $end) && $end >= $start;
 
-$sql = "SELECT v.* FROM vehicles v WHERE v.status = 'operational'";
+$sql = "SELECT v.*, c.name AS category FROM vehicles v INNER JOIN vehicle_categories c ON c.id = v.category_id WHERE v.status = 'operational'";
 $params = [];
 if (in_array($cat, ['Sedan', 'SUV', 'Premium'], true)) {
-  $sql .= ' AND v.category = ?';
+  $sql .= ' AND c.name = ?';
   $params[] = $cat;
 }
 if (in_array($trans, ['Automatic', 'Manual'], true)) {
@@ -30,11 +30,11 @@ if ($max !== null) {
 }
 if ($validDates) {
   $sql .= " AND NOT EXISTS (
-      SELECT 1 FROM rentals r
+      SELECT 1 FROM reservations r
       WHERE r.vehicle_id = v.id
-        AND r.status IN ('pending', 'confirmed', 'ongoing')
-        AND r.start_date <= ?
-        AND r.end_date >= ?
+        AND r.status IN ('pending', 'confirmed')
+        AND r.requested_pickup_at < CONCAT(?, ' 23:59:59')
+        AND r.requested_return_at > CONCAT(?, ' 00:00:00')
   )
   AND NOT EXISTS (
       SELECT 1 FROM maintenance m

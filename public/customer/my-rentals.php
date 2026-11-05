@@ -4,22 +4,25 @@ require_once __DIR__ . '/../../config.php';
 $user = require_customer();
 $perPage = 4;
 $page = max(1, (int)($_GET['page'] ?? 1));
-$countStmt = db()->prepare('SELECT COUNT(*) FROM rentals WHERE user_id = ?');
+$countStmt = db()->prepare('SELECT COUNT(*) FROM reservations WHERE customer_id = ?');
 $countStmt->execute([$user['id']]);
 $totalRentals = (int)$countStmt->fetchColumn();
 $totalPages = max(1, (int)ceil($totalRentals / $perPage));
 $page = min($page, $totalPages);
 $offset = ($page - 1) * $perPage;
 $stmt = db()->prepare(
-    "SELECT r.id, r.start_date, r.end_date, r.actual_return, r.total_amount, r.status, r.payment_method,
-            v.brand, v.model, v.category, v.image,
+    "SELECT r.id, r.requested_pickup_at AS start_date, r.requested_return_at AS end_date,
+            NULL AS actual_return, r.total_amount, r.status, r.payment_method,
+            v.brand, v.model, c.name AS category, v.image,
             COALESCE(SUM(p.amount), 0) AS paid_amount
-     FROM rentals r
+     FROM reservations r
      INNER JOIN vehicles v ON v.id = r.vehicle_id
-     LEFT JOIN payments p ON p.rental_id = r.id
-     WHERE r.user_id = ?
-     GROUP BY r.id, v.id
-     ORDER BY r.created_at DESC, r.start_date DESC
+     INNER JOIN vehicle_categories c ON c.id = v.category_id
+     LEFT JOIN rentals rt ON rt.reservation_id = r.id
+     LEFT JOIN payments p ON p.reservation_id = r.id OR p.rental_id = rt.id
+     WHERE r.customer_id = ?
+     GROUP BY r.id, rt.id, v.id, c.id
+     ORDER BY r.created_at DESC, r.requested_pickup_at DESC
      LIMIT {$perPage} OFFSET {$offset}"
 );
 $stmt->execute([$user['id']]);

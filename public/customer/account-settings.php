@@ -17,7 +17,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $profileImage = trim($_POST['profile_image'] ?? '');
     $paymentMethod = $_POST['preferred_payment_method'] ?? '';
 
-    if ($name === '' || !filter_var($email, FILTER_VALIDATE_EMAIL) || !in_array($paymentMethod, ['', 'cash', 'gcash', 'card'], true)) {
+    if ($name === '' || !filter_var($email, FILTER_VALIDATE_EMAIL) || !in_array($paymentMethod, ['', 'cash', 'bank_transfer', 'gcash', 'card'], true)) {
         $error = 'Enter a valid name, email, and payment method.';
     } else {
         $duplicate = db()->prepare('SELECT id FROM users WHERE email = ? AND id <> ? LIMIT 1');
@@ -66,7 +66,7 @@ include __DIR__ . '/../../includes/header.php';
       <label>Phone number<input type="tel" name="phone" value="<?= e($account['phone']) ?>" placeholder="+63 900 000 0000"></label>
       <label>Address<textarea name="address" rows="3" placeholder="Your pickup or billing address"><?= e($account['address']) ?></textarea></label>
       <label>Profile image URL<input type="url" name="profile_image" value="<?= e($account['profile_image']) ?>" placeholder="https://example.com/profile.jpg"></label>
-      <label>Preferred payment method<select name="preferred_payment_method"><option value="">No preference</option><?php foreach (['cash', 'gcash', 'card'] as $method): ?><option value="<?= $method ?>" <?= $account['preferred_payment_method'] === $method ? 'selected' : '' ?>><?= ucfirst($method) ?></option><?php endforeach; ?></select></label>
+      <label>Preferred payment method<select name="preferred_payment_method"><option value="">No preference</option><?php foreach (['cash', 'bank_transfer', 'gcash', 'card'] as $method): ?><option value="<?= $method ?>" <?= $account['preferred_payment_method'] === $method ? 'selected' : '' ?>><?= ucfirst($method) ?></option><?php endforeach; ?></select></label>
       <button class="btn btn-coral" type="submit">Save account details</button>
         </form>
       </section>

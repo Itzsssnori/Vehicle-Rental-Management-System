@@ -87,9 +87,9 @@ include __DIR__ . '/../../includes/header.php';
         <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
         <input type="hidden" name="name" value="<?= e($account['name']) ?>">
         <input type="hidden" name="email" value="<?= e($account['email']) ?>">
-        <label>Current password<input type="password" name="current_password" autocomplete="current-password"></label>
-        <label>New password<input type="password" name="new_password" minlength="8" autocomplete="new-password"></label>
-        <label>Confirm new password<input type="password" name="confirm_password" minlength="8" autocomplete="new-password"></label>
+        <label>Current password<span class="password-field"><input id="workspace-current-password" type="password" name="current_password" autocomplete="current-password"><button class="password-toggle" type="button" data-password-toggle="workspace-current-password" aria-controls="workspace-current-password" aria-pressed="false">Show</button></span></label>
+        <label>New password<span class="password-field"><input id="workspace-new-password" type="password" name="new_password" minlength="8" autocomplete="new-password"><button class="password-toggle" type="button" data-password-toggle="workspace-new-password" aria-controls="workspace-new-password" aria-pressed="false">Show</button></span></label>
+        <label>Confirm new password<span class="password-field"><input id="workspace-confirm-password" type="password" name="confirm_password" minlength="8" autocomplete="new-password"><button class="password-toggle" type="button" data-password-toggle="workspace-confirm-password" aria-controls="workspace-confirm-password" aria-pressed="false">Show</button></span></label>
         <button class="btn btn-navy" type="submit">Update security</button>
       </form>
     </section>

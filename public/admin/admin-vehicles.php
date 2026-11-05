@@ -36,17 +36,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             if ($id > 0) {
+                $categoryStmt = $pdo->prepare('SELECT id FROM vehicle_categories WHERE name = ? AND status = "active"');
+                $categoryStmt->execute([$category]);
+                $categoryId = $categoryStmt->fetchColumn();
+                if (!$categoryId) {
+                    throw new RuntimeException('Invalid vehicle category.');
+                }
                 $stmt = $pdo->prepare(
-                    'UPDATE vehicles SET brand = ?, model = ?, category = ?, transmission = ?, seats = ?, daily_rate = ?, status = ?, image = ? WHERE id = ?'
+                    'UPDATE vehicles SET brand = ?, model = ?, category_id = ?, transmission = ?, seats = ?, daily_rate = ?, status = ?, image = ? WHERE id = ?'
                 );
-                $stmt->execute([$brand, $model, $category, $transmission, $seats, $rate, $status, $image ?: null, $id]);
+                $stmt->execute([$brand, $model, $categoryId, $transmission, $seats, $rate, $status, $image ?: null, $id]);
                 write_audit($pdo, (int)$user['id'], 'vehicle_updated', 'vehicles', $id, $brand . ' ' . $model);
                 $message = 'Vehicle updated.';
             } else {
+                $categoryStmt = $pdo->prepare('SELECT id FROM vehicle_categories WHERE name = ? AND status = "active"');
+                $categoryStmt->execute([$category]);
+                $categoryId = $categoryStmt->fetchColumn();
+                if (!$categoryId) {
+                    throw new RuntimeException('Invalid vehicle category.');
+                }
                 $stmt = $pdo->prepare(
-                    'INSERT INTO vehicles (brand, model, category, transmission, seats, daily_rate, status, image) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+                    'INSERT INTO vehicles (category_id, brand, model, transmission, seats, daily_rate, status, image, plate_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
                 );
-                $stmt->execute([$brand, $model, $category, $transmission, $seats, $rate, $status, $image ?: null]);
+                $stmt->execute([$categoryId, $brand, $model, $transmission, $seats, $rate, $status, $image ?: null, 'VELO-' . strtoupper(bin2hex(random_bytes(3)))]);
                 write_audit($pdo, (int)$user['id'], 'vehicle_created', 'vehicles', (int)$pdo->lastInsertId(), $brand . ' ' . $model);
                 $message = 'Vehicle added.';
             }
@@ -79,7 +91,7 @@ $totalVehicles = (int)db()->query('SELECT COUNT(*) FROM vehicles')->fetchColumn(
 $totalPages = max(1, (int)ceil($totalVehicles / $perPage));
 $page = min($page, $totalPages);
 $offset = ($page - 1) * $perPage;
-$vehicleStmt = db()->query("SELECT * FROM vehicles ORDER BY status, brand, model LIMIT {$perPage} OFFSET {$offset}");
+$vehicleStmt = db()->query("SELECT v.*, c.name AS category FROM vehicles v INNER JOIN vehicle_categories c ON c.id = v.category_id ORDER BY v.status, v.brand, v.model LIMIT {$perPage} OFFSET {$offset}");
 $vehicles = $vehicleStmt->fetchAll();
 include __DIR__ . '/../../includes/header.php';
 ?>

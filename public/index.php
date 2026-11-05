@@ -16,11 +16,11 @@ $featuredStmt = db()->query(
        )
        AND NOT EXISTS (
            SELECT 1
-           FROM rentals r
+           FROM reservations r
            WHERE r.vehicle_id = v.id
-             AND r.status IN ('pending', 'confirmed', 'ongoing')
-             AND r.start_date <= CURDATE()
-             AND r.end_date >= CURDATE()
+             AND r.status IN ('pending', 'confirmed')
+             AND r.requested_pickup_at < CURRENT_DATE + INTERVAL 1 DAY
+             AND r.requested_return_at >= CURRENT_DATE
        )
      ORDER BY v.id DESC
      LIMIT 3"

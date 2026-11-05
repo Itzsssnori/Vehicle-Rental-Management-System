@@ -30,24 +30,27 @@ $inserted = 0;
 $updated = 0;
 $skipped = 0;
 $pdo = db();
-$pdo->exec('ALTER TABLE vehicles MODIFY image TEXT NULL');
+$categoryIds = $pdo->query('SELECT name, id FROM vehicle_categories')->fetchAll(PDO::FETCH_KEY_PAIR);
 $check = $pdo->prepare('SELECT id FROM vehicles WHERE brand = ? AND model = ? LIMIT 1');
 $update = $pdo->prepare(
-    'UPDATE vehicles SET category = ?, transmission = ?, seats = ?, daily_rate = ?, status = ?, image = ? WHERE id = ?'
+    'UPDATE vehicles SET category_id = ?, transmission = ?, seats = ?, daily_rate = ?, status = ?, image = ? WHERE id = ?'
 );
 $insert = $pdo->prepare(
-    'INSERT INTO vehicles (brand, model, category, transmission, seats, daily_rate, image) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO vehicles (category_id, brand, model, transmission, seats, daily_rate, plate_number, image) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
 );
 
-function fetch_json(string $url): ?array {
-    $url = 'https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch='
-        . rawurlencode($url) . '&gsrnamespace=6&gsrlimit=20&prop=imageinfo&iiprop=url&iiurlwidth=900&format=json';
+function fetch_json(string $query): ?array {
+    $apiKey = trim((string)(getenv('PEXELS_API_KEY') ?: ''));
+    if ($apiKey === '') {
+        return null;
+    }
+    $url = 'https://api.pexels.com/v1/search?query=' . rawurlencode($query) . '&per_page=15&orientation=landscape';
     $context = stream_context_create([
         'http' => [
             'method' => 'GET',
             'timeout' => 15,
             'ignore_errors' => true,
-            'header' => "Accept: application/json\r\nUser-Agent: VELO-VRMS/1.0\r\n",
+            'header' => "Accept: application/json\r\nAuthorization: {$apiKey}\r\nUser-Agent: VELO-VRMS/1.0\r\n",
         ],
     ]);
     $response = file_get_contents($url, false, $context);
@@ -60,50 +63,39 @@ function fetch_json(string $url): ?array {
 
 function find_vehicle_image(string $brand, string $model): ?string {
     $payload = fetch_json($brand . ' ' . $model . ' car');
-    $excludedTerms = ['interior', 'dashboard', 'police', 'patrol', 'concept', 'render', 'toy'];
-    $bestUrl = null;
-    $bestScore = 0;
-    foreach (($payload['query']['pages'] ?? []) as $page) {
-        $title = strtolower($page['title'] ?? '');
-        $isExcluded = false;
-        foreach ($excludedTerms as $term) {
-            if (str_contains($title, $term)) {
-                $isExcluded = true;
-                break;
-            }
-        }
-        if ($isExcluded) {
-            continue;
-        }
-        $score = 0;
-        foreach (preg_split('/[\s-]+/', strtolower($brand . ' ' . $model)) as $term) {
-            if ($term !== '' && str_contains($title, $term)) {
-                $score++;
-            }
-        }
-        if ($score > $bestScore) {
-            $bestScore = $score;
-            $bestUrl = $page['imageinfo'][0]['thumburl'] ?? $page['imageinfo'][0]['url'] ?? null;
-        }
+    $image = $payload['photos'][0]['src']['large2x'] ?? $payload['photos'][0]['src']['large'] ?? null;
+    if ($image) {
+        return $image;
     }
-    return $bestUrl;
+    // Demo fallback keeps the local presentation usable without an API key.
+    return getenv('PEXELS_DEMO_IMAGE') ?: 'https://images.pexels.com/photos/170811/pexels-photo-170811.jpeg?auto=compress&cs=tinysrgb&w=1200';
 }
 
 foreach ($makeModels as [$make, $model, $category, $seats, $rate]) {
+    if (!isset($categoryIds[$category])) {
+        fwrite(STDERR, "Unknown vehicle category {$category}; skipping {$make} {$model}.\n");
+        $skipped++;
+        continue;
+    }
     $check->execute([$make, $model]);
     $existing = $check->fetch();
     $image = find_vehicle_image($make, $model);
     if ($image === null) {
         $skipped++;
-        fwrite(STDERR, "No image found for {$make} {$model}; using placeholder.\n");
+        fwrite(STDERR, "No Pexels image found for {$make} {$model}; using the demo fallback image.\n");
+        if ($existing) {
+            $update->execute([$categoryIds[$category], 'Automatic', $seats, $rate, 'operational', $existing['image'], $existing['id']]);
+            $updated++;
+            continue;
+        }
         $image = 'vehicle-placeholder.svg';
     }
     if ($existing) {
-        $update->execute([$category, 'Automatic', $seats, $rate, 'operational', $image, $existing['id']]);
+        $update->execute([$categoryIds[$category], 'Automatic', $seats, $rate, 'operational', $image, $existing['id']]);
         $updated++;
         continue;
     }
-    $insert->execute([$make, $model, $category, 'Automatic', $seats, $rate, $image]);
+    $insert->execute([$categoryIds[$category], $make, $model, 'Automatic', $seats, $rate, 'VELO-' . strtoupper(bin2hex(random_bytes(3))), $image]);
     $inserted++;
 }
 

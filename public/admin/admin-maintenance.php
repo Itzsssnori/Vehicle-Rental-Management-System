@@ -21,8 +21,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 || ($end !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $end)) || ($end !== '' && $end < $start)) {
                 throw new RuntimeException('Enter valid maintenance details.');
             }
-            $stmt = $pdo->prepare('INSERT INTO maintenance (vehicle_id, description, start_date, end_date) VALUES (?, ?, ?, ?)');
-            $stmt->execute([$vehicleId, $description, $start, $end ?: null]);
+            $stmt = $pdo->prepare('INSERT INTO maintenance (vehicle_id, description, start_date, end_date, created_by) VALUES (?, ?, ?, ?, ?)');
+            $stmt->execute([$vehicleId, $description, $start, $end ?: null, current_user()['id']]);
             write_audit($pdo, (int)current_user()['id'], 'maintenance_added', 'maintenance', (int)$pdo->lastInsertId(), $description);
             $message = 'Maintenance record added.';
         } elseif ($action === 'delete') {
@@ -30,7 +30,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!$id) {
                 throw new RuntimeException('Invalid maintenance record.');
             }
-            $stmt = $pdo->prepare('DELETE FROM maintenance WHERE id = ?');
+            $stmt = $pdo->prepare("UPDATE maintenance SET maintenance_status = 'cancelled' WHERE id = ?");
             $stmt->execute([$id]);
             write_audit($pdo, (int)current_user()['id'], 'maintenance_removed', 'maintenance', $id);
             $message = 'Maintenance record removed.';

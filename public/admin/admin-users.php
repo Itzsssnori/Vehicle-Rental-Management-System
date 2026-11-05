@@ -16,20 +16,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif ($id === (int)$user['id']) {
         $error = 'You cannot change your own administrator role.';
     } elseif ($action === 'approve' && $role === 'staff') {
-        $stmt = db()->prepare("UPDATE users SET account_status = 'approved' WHERE id = ? AND role = 'staff'");
+        $stmt = db()->prepare("UPDATE users u INNER JOIN user_roles ur ON ur.user_id = u.id INNER JOIN roles r ON r.id = ur.role_id SET u.account_status = 'approved' WHERE u.id = ? AND r.name = 'staff'");
         $stmt->execute([$id]);
         write_audit(db(), (int)$user['id'], 'staff_approved', 'users', $id);
         $message = 'Staff registration approved.';
     } elseif ($action === 'reject' && $role === 'staff') {
-        $stmt = db()->prepare("UPDATE users SET account_status = 'rejected' WHERE id = ? AND role = 'staff'");
+        $stmt = db()->prepare("UPDATE users u INNER JOIN user_roles ur ON ur.user_id = u.id INNER JOIN roles r ON r.id = ur.role_id SET u.account_status = 'rejected' WHERE u.id = ? AND r.name = 'staff'");
         $stmt->execute([$id]);
         write_audit(db(), (int)$user['id'], 'staff_rejected', 'users', $id);
         $message = 'Staff registration rejected.';
     } elseif (!in_array($role, ['customer', 'staff', 'admin'], true)) {
         $error = 'Invalid account role.';
     } else {
-        $stmt = db()->prepare('UPDATE users SET role = ? WHERE id = ?');
-        $stmt->execute([$role, $id]);
+        $roleStmt = db()->prepare('SELECT id FROM roles WHERE name = ?');
+        $roleStmt->execute([$role]);
+        $roleId = $roleStmt->fetchColumn();
+        if (!$roleId) {
+            throw new RuntimeException('Invalid account role.');
+        }
+        db()->beginTransaction();
+        db()->prepare('DELETE FROM user_roles WHERE user_id = ?')->execute([$id]);
+        db()->prepare('INSERT INTO user_roles (user_id, role_id, assigned_by) VALUES (?, ?, ?)')->execute([$id, $roleId, $user['id']]);
+        db()->commit();
         write_audit(db(), (int)$user['id'], 'user_role_changed', 'users', $id, 'Role changed to ' . $role . '.');
         $message = 'Account role updated.';
     }
@@ -38,7 +46,11 @@ $totalUsers = (int)db()->query('SELECT COUNT(*) FROM users')->fetchColumn();
 $totalPages = max(1, (int)ceil($totalUsers / $perPage));
 $page = min($page, $totalPages);
 $offset = ($page - 1) * $perPage;
-$users = db()->query("SELECT id, name, email, role, account_status, created_at FROM users ORDER BY created_at DESC LIMIT {$perPage} OFFSET {$offset}")->fetchAll();
+$users = db()->query("SELECT u.id, u.name, u.email, r.name AS role, u.account_status, u.created_at
+                      FROM users u
+                      INNER JOIN user_roles ur ON ur.user_id = u.id
+                      INNER JOIN roles r ON r.id = ur.role_id
+                      ORDER BY u.created_at DESC LIMIT {$perPage} OFFSET {$offset}")->fetchAll();
 include __DIR__ . '/../../includes/header.php';
 ?>
 <main class="admin-page">

@@ -4,14 +4,15 @@ require_once __DIR__ . '/../../config.php';
 $user = require_role('admin');
 include __DIR__ . '/../../includes/header.php';
 $vehicles = (int)db()->query('SELECT COUNT(*) FROM vehicles')->fetchColumn();
-$customers = (int)db()->query("SELECT COUNT(*) FROM users WHERE role = 'customer'")->fetchColumn();
-$rentals = (int)db()->query("SELECT COUNT(*) FROM rentals WHERE status IN ('confirmed', 'ongoing')")->fetchColumn();
-$pending = (int)db()->query("SELECT COUNT(*) FROM rentals WHERE status = 'pending'")->fetchColumn();
-$pendingStaff = (int)db()->query("SELECT COUNT(*) FROM users WHERE role = 'staff' AND account_status = 'pending'")->fetchColumn();
+$customers = (int)db()->query("SELECT COUNT(*) FROM user_roles ur INNER JOIN roles r ON r.id = ur.role_id WHERE r.name = 'customer'")->fetchColumn();
+$rentals = (int)db()->query("SELECT COUNT(*) FROM reservations WHERE status = 'confirmed'")->fetchColumn()
+    + (int)db()->query("SELECT COUNT(*) FROM rentals WHERE status = 'ongoing'")->fetchColumn();
+$pending = (int)db()->query("SELECT COUNT(*) FROM reservations WHERE status = 'pending'")->fetchColumn();
+$pendingStaff = (int)db()->query("SELECT COUNT(*) FROM user_roles ur INNER JOIN roles r ON r.id = ur.role_id INNER JOIN users u ON u.id = ur.user_id WHERE r.name = 'staff' AND u.account_status = 'pending'")->fetchColumn();
 $maintenance = (int)db()->query("SELECT COUNT(*) FROM vehicles WHERE status = 'maintenance'")->fetchColumn();
 $outstanding = (float)db()->query(
-    "SELECT COALESCE(SUM(r.total_amount), 0) - COALESCE((SELECT SUM(amount) FROM payments), 0)
-     FROM rentals r"
+    "SELECT COALESCE((SELECT SUM(amount) FROM rental_charges), 0)
+          - COALESCE((SELECT SUM(amount) FROM payments), 0)"
 )->fetchColumn();
 ?>
 <main class="dashboard-page">

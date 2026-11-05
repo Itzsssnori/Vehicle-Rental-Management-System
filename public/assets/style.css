@@ -29,6 +29,25 @@ body {
 img { max-width: 100%; display: block; }
 a { color: inherit; }
 button, input, select { font: inherit; }
+.password-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.password-field input {
+  width: 100%;
+  padding-right: 68px;
+}
+.password-toggle {
+  position: absolute;
+  right: 10px;
+  border: 0;
+  background: transparent;
+  color: var(--navy);
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+}
 :focus-visible {
   outline: 3px solid var(--coral);
   outline-offset: 3px;
