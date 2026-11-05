@@ -155,11 +155,7 @@ if (current_user() && current_user()['role'] !== 'customer' && in_array(basename
     include __DIR__ . '/workspace-sidebar.php';
 }
 ?>
-<?php if (basename($_SERVER['PHP_SELF']) === 'vehicle.php'): ?>
-  <a class="back-button" href="/vehicles.php" onclick="if (window.history.length > 1) { window.history.back(); return false; }" aria-label="Go back to the previous page" title="Go back">
-    <span aria-hidden="true">↪</span>
-  </a>
-<?php endif; ?>
+
 <script>
   (() => {
     const sidebars = document.querySelectorAll('.dashboard-sidebar, .workspace-sidebar');
