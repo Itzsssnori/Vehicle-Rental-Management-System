@@ -12,68 +12,6 @@ function toggleUserDropdown(btn) {
   btn.setAttribute('aria-expanded', String(isOpen));
 }
 
-// Keep landing-page navigation aligned with the section currently in view.
-const navSections = [...document.querySelectorAll('[data-nav-section]')];
-const observedSections = navSections
-  .map(link => document.getElementById(link.dataset.navSection))
-  .filter(Boolean);
-
-if (observedSections.length) {
-  const setActiveSection = (sectionId) => {
-    navSections.forEach(link => {
-      link.classList.toggle('active', link.dataset.navSection === sectionId);
-    });
-  };
-
-  navSections.forEach(link => {
-    link.addEventListener('click', () => {
-      if (link.dataset.navSection) setActiveSection(link.dataset.navSection);
-    });
-  });
-
-  const sectionObserver = new IntersectionObserver((entries) => {
-    const visible = entries
-      .filter(entry => entry.isIntersecting)
-      .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
-    if (visible) setActiveSection(visible.target.id);
-  }, { rootMargin: '-22% 0px -58% 0px', threshold: [0.1, 0.35, 0.65] });
-
-  observedSections.forEach(section => sectionObserver.observe(section));
-}
-
-// Filter the landing fleet in place without navigating or moving the viewport.
-const fleetFilters = [...document.querySelectorAll('[data-fleet-filter]')];
-const fleetCards = [...document.querySelectorAll('#landing-fleet-grid [data-fleet-category]')];
-
-if (fleetFilters.length && fleetCards.length) {
-  const filterFleet = (category) => {
-    fleetFilters.forEach(filter => {
-      filter.classList.toggle('active', filter.dataset.fleetFilter === category);
-    });
-
-    fleetCards.forEach(card => {
-      const visible = category === 'all' || card.dataset.fleetCategory === category;
-      card.hidden = !visible;
-      if (visible) {
-        card.classList.remove('fleet-card-reveal');
-        requestAnimationFrame(() => card.classList.add('fleet-card-reveal'));
-      }
-    });
-  };
-
-  fleetFilters.forEach(filter => {
-    filter.addEventListener('click', (event) => {
-      event.preventDefault();
-      filterFleet(filter.dataset.fleetFilter);
-    });
-  });
-
-  const initialFilter = fleetFilters.find(filter => filter.classList.contains('active'));
-  if (initialFilter && initialFilter.dataset.fleetFilter !== 'all') {
-    filterFleet(initialFilter.dataset.fleetFilter);
-  }
-}
-
 // Close user dropdown when clicking outside
 document.addEventListener('click', (e) => {
   const dropdown = document.getElementById('user-dropdown');
@@ -96,14 +34,27 @@ document.querySelectorAll('input[name="start"]').forEach(s => {
   });
 });
 
-// Password visibility toggle
+// Accessible Password visibility toggle with SVG icon swapping
 document.querySelectorAll('[data-password-toggle]').forEach(toggle => {
   toggle.addEventListener('click', () => {
     const input = document.getElementById(toggle.dataset.passwordToggle);
     if (!input) return;
     const visible = input.type === 'text';
     input.type = visible ? 'password' : 'text';
-    toggle.textContent = visible ? 'Show' : 'Hide';
     toggle.setAttribute('aria-pressed', String(!visible));
+
+    const labelSpan = toggle.querySelector('.toggle-label');
+    if (labelSpan) {
+      labelSpan.textContent = visible ? 'Show' : 'Hide';
+    } else {
+      toggle.textContent = visible ? 'Show' : 'Hide';
+    }
+
+    const iconSpan = toggle.querySelector('.toggle-icon');
+    if (iconSpan) {
+      iconSpan.innerHTML = visible
+        ? '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>'
+        : '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" y1="2" x2="22" y2="22"/></svg>';
+    }
   });
 });
