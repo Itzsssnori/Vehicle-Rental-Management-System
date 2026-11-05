@@ -1,10 +1,11 @@
 <?php
-$title = 'Browse Vehicles';
+$title = 'Browse Vehicles - VELO';
 require_once __DIR__ . '/../config.php';
 include __DIR__ . '/../includes/header.php';
 $user = current_user();
 $customerView = $user && $user['role'] === 'customer';
 
+$search = trim($_GET['search'] ?? $_GET['q'] ?? '');
 $cat   = $_GET['category'] ?? '';
 $trans = $_GET['transmission'] ?? '';
 $max   = is_numeric($_GET['max_price'] ?? '') ? (float)$_GET['max_price'] : null;
@@ -16,6 +17,13 @@ $validDates = preg_match('/^\d{4}-\d{2}-\d{2}$/', $start) && preg_match('/^\d{4}
 
 $sql = "SELECT v.*, c.name AS category FROM vehicles v INNER JOIN vehicle_categories c ON c.id = v.category_id WHERE v.status = 'operational'";
 $params = [];
+
+if ($search !== '') {
+  $sql .= ' AND (v.brand LIKE ? OR v.model LIKE ? OR c.name LIKE ?)';
+  $params[] = '%' . $search . '%';
+  $params[] = '%' . $search . '%';
+  $params[] = '%' . $search . '%';
+}
 if (in_array($cat, ['Sedan', 'SUV', 'Premium'], true)) {
   $sql .= ' AND c.name = ?';
   $params[] = $cat;
@@ -65,92 +73,141 @@ $vehicles = $stmt->fetchAll();
   <section class="catalog-hero">
     <div>
       <p class="eyebrow">Fleet catalog</p>
-      <h1>Browse Vehicles</h1>
-      <p>Find the right vehicle for your trip, compare pricing, and check availability before you submit a request.</p>
+      <h1>Car Listing & Availability</h1>
+      <p>Compare vehicles, review features, check availability, and request a booking with transparent daily pricing.</p>
     </div>
-    <span class="catalog-count"><?= $totalVehicles ?> vehicles available</span>
+    <span class="catalog-count"><?= $totalVehicles ?> vehicles found</span>
   </section>
 
   <section class="catalog-content">
 
-  <form class="filter-bar" method="get">
+  <form class="portal-filter-card" method="get">
     <input type="hidden" name="start" value="<?= e($start) ?>">
     <input type="hidden" name="end" value="<?= e($end) ?>">
     <input type="hidden" name="page" value="1">
 
-    <label>
-      Category
+    <div class="filter-field">
+      <label>Search Keyword</label>
+      <input type="text" name="search" placeholder="e.g. Toyota, Fortuner..." value="<?= e($search) ?>">
+    </div>
+
+    <div class="filter-field">
+      <label>Category</label>
       <select name="category">
-        <option value="">All</option>
+        <option value="">All Categories</option>
         <?php foreach (['Sedan', 'SUV', 'Premium'] as $option): ?>
           <option value="<?= e($option) ?>" <?= $cat === $option ? 'selected' : '' ?>><?= e($option) ?></option>
         <?php endforeach; ?>
       </select>
-    </label>
+    </div>
 
-    <label>
-      Transmission
+    <div class="filter-field">
+      <label>Transmission</label>
       <select name="transmission">
-        <option value="">All</option>
+        <option value="">All Transmissions</option>
         <?php foreach (['Automatic', 'Manual'] as $option): ?>
           <option value="<?= e($option) ?>" <?= $trans === $option ? 'selected' : '' ?>><?= e($option) ?></option>
         <?php endforeach; ?>
       </select>
-    </label>
+    </div>
 
-    <label>
-      Max daily rate (₱)
-      <input type="number" name="max_price" min="0" step="100" value="<?= e($_GET['max_price'] ?? '') ?>">
-    </label>
+    <div class="filter-field">
+      <label>Max Daily Rate (₱)</label>
+      <input type="number" name="max_price" min="0" step="100" placeholder="e.g. 3500" value="<?= e($_GET['max_price'] ?? '') ?>">
+    </div>
 
-    <button class="btn btn-navy" type="submit">Apply Filters</button>
+    <div class="filter-actions">
+      <button class="btn btn-navy" type="submit">Filter Fleet</button>
+      <?php if ($search !== '' || $cat !== '' || $trans !== '' || $max !== null): ?>
+        <a class="btn-clear-filter" href="/vehicles.php">Reset</a>
+      <?php endif; ?>
+    </div>
   </form>
 
   <?php if ($validDates): ?>
-    <p class="note">Showing vehicles free from <strong><?= e($start) ?></strong> to <strong><?= e($end) ?></strong>.</p>
+    <div class="portal-date-alert">
+      <span>Showing vehicles verified available from <strong><?= e($start) ?></strong> to <strong><?= e($end) ?></strong>.</span>
+    </div>
   <?php endif; ?>
 
   <?php if (!$vehicles): ?>
     <div class="empty-state">
-      <h3>No vehicles match your filters</h3>
-      <p>Try different dates, clear a filter, or check availability for a different travel window.</p>
-      <a class="btn btn-navy" href="/vehicles.php">Clear Filters</a>
+      <h3>No vehicles match your criteria</h3>
+      <p>Try clearing your search keyword, adjusting price filters, or choosing different rental dates.</p>
+      <a class="btn btn-navy" href="/vehicles.php">Reset Filters</a>
     </div>
   <?php else: ?>
-    <div class="vehicle-grid">
+    <div class="car-portal-grid">
       <?php foreach ($vehicles as $vehicle):
         $days = $validDates ? rental_days($start, $end) : null;
         $image = vehicle_image($vehicle['image']);
+        $fuel = $vehicle['fuel_type'] ?: 'Petrol';
+        $year = $vehicle['year'] ?: 2022;
+        $seats = (int)($vehicle['seats'] ?: 5);
+        $desc = $vehicle['description'] ?: ($vehicle['category'] . ' with ' . strtolower($vehicle['transmission']) . ' transmission, well-maintained for comfort and fuel economy.');
       ?>
-        <article class="vehicle-card">
-          <div class="vehicle-image" style="background-image:url('<?= e($image) ?>')"></div>
-          <div class="vehicle-body">
-            <div class="vehicle-meta">
-              <span class="tag"><?= e($vehicle['category']) ?></span>
-              <span class="status-badge status-success">Available</span>
+        <article class="car-listing-card">
+          <div class="card-media-wrapper">
+            <a href="/vehicle.php?id=<?= (int)$vehicle['id'] ?>&start=<?= e($start) ?>&end=<?= e($end) ?>" class="card-img-link" tabindex="-1" aria-hidden="true">
+              <div class="card-img" style="background-image:url('<?= e($image) ?>');" role="img" aria-label="<?= e($vehicle['brand'] . ' ' . $vehicle['model']) ?>"></div>
+            </a>
+
+            <!-- Dark Specification Ribbon Underneath Image -->
+            <div class="car-spec-ribbon">
+              <div class="spec-col">
+                <span class="spec-glyph" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 20V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v15M4 20h14M6 8h10M18 7l2 2v8a2 2 0 0 1-4 0v-3h2"/></svg></span>
+                <span class="spec-lbl"><?= e($fuel) ?></span>
+              </div>
+              <div class="spec-col">
+                <span class="spec-glyph" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/></svg></span>
+                <span class="spec-lbl"><?= (int)$year ?> Model</span>
+              </div>
+              <div class="spec-col">
+                <span class="spec-glyph" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3"/><path d="M3 20v-1a6 6 0 0 1 12 0v1M16 11a3 3 0 1 0 0-6M17 14a5 5 0 0 1 4 5v1"/></svg></span>
+                <span class="spec-lbl"><?= $seats ?> seats</span>
+              </div>
             </div>
-            <h3><?= e($vehicle['brand']) ?> <?= e($vehicle['model']) ?></h3>
-            <p class="specs"><?= e($vehicle['transmission']) ?> · <?= (int)$vehicle['seats'] ?> seats</p>
-            <div class="price-row">
-              <strong>₱<?= number_format((float)$vehicle['daily_rate']) ?></strong>
-              <span>/ day</span>
+          </div>
+
+          <div class="card-info-content">
+            <div class="card-title-price-row">
+              <h3 class="card-vehicle-title">
+                <a href="/vehicle.php?id=<?= (int)$vehicle['id'] ?>&start=<?= e($start) ?>&end=<?= e($end) ?>">
+                  <?= e($vehicle['brand']) ?> <?= e($vehicle['model']) ?>
+                </a>
+              </h3>
+              <div class="card-daily-price">
+                <strong>₱<?= number_format((float)$vehicle['daily_rate']) ?></strong>
+                <span class="price-cycle">/Day</span>
+              </div>
             </div>
+
+            <p class="card-snippet-desc">
+              <?= e(strlen($desc) > 95 ? substr($desc, 0, 92) . '...' : $desc) ?>
+            </p>
+
             <?php if ($days): ?>
-              <p class="estimate">Estimated total: ₱<?= number_format((float)$vehicle['daily_rate'] * $days) ?> for <?= $days ?> day(s)</p>
+              <div class="card-estimate-pill">
+                <span>Total for <?= $days ?> day(s): <strong>₱<?= number_format((float)$vehicle['daily_rate'] * $days) ?></strong></span>
+              </div>
             <?php endif; ?>
-            <div class="vehicle-actions">
-              <span class="vehicle-availability"><?= $validDates ? 'Available for your dates' : 'Select dates to check availability' ?></span>
-              <a class="btn btn-navy" href="/vehicle.php?id=<?= (int)$vehicle['id'] ?>&start=<?= e($start) ?>&end=<?= e($end) ?>">View Details</a>
+
+            <div class="card-action-bar">
+              <span class="card-status-pill status-ready"><?= $validDates ? 'Available for Dates' : 'Operational' ?></span>
+              <a href="/vehicle.php?id=<?= (int)$vehicle['id'] ?>&start=<?= e($start) ?>&end=<?= e($end) ?>" class="card-action-btn">
+                View Details &rarr;
+              </a>
             </div>
           </div>
         </article>
       <?php endforeach; ?>
     </div>
   <?php endif; ?>
+
   <?php if ($totalPages > 1): ?>
     <nav class="pagination" aria-label="Vehicle catalog pages">
       <?php for ($number = 1; $number <= $totalPages; $number++): ?>
-        <a class="<?= $number === $page ? 'active' : '' ?>" href="?<?= e(http_build_query(['category' => $cat, 'transmission' => $trans, 'max_price' => $_GET['max_price'] ?? '', 'start' => $start, 'end' => $end, 'page' => $number])) ?>"><?= $number ?></a>
+        <a class="<?= $number === $page ? 'active' : '' ?>" href="?<?= e(http_build_query(['search' => $search, 'category' => $cat, 'transmission' => $trans, 'max_price' => $_GET['max_price'] ?? '', 'start' => $start, 'end' => $end, 'page' => $number])) ?>"><?= $number ?></a>
       <?php endfor; ?>
     </nav>
   <?php endif; ?>
