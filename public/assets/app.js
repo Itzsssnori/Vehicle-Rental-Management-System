@@ -41,6 +41,39 @@ if (observedSections.length) {
   observedSections.forEach(section => sectionObserver.observe(section));
 }
 
+// Filter the landing fleet in place without navigating or moving the viewport.
+const fleetFilters = [...document.querySelectorAll('[data-fleet-filter]')];
+const fleetCards = [...document.querySelectorAll('#landing-fleet-grid [data-fleet-category]')];
+
+if (fleetFilters.length && fleetCards.length) {
+  const filterFleet = (category) => {
+    fleetFilters.forEach(filter => {
+      filter.classList.toggle('active', filter.dataset.fleetFilter === category);
+    });
+
+    fleetCards.forEach(card => {
+      const visible = category === 'all' || card.dataset.fleetCategory === category;
+      card.hidden = !visible;
+      if (visible) {
+        card.classList.remove('fleet-card-reveal');
+        requestAnimationFrame(() => card.classList.add('fleet-card-reveal'));
+      }
+    });
+  };
+
+  fleetFilters.forEach(filter => {
+    filter.addEventListener('click', (event) => {
+      event.preventDefault();
+      filterFleet(filter.dataset.fleetFilter);
+    });
+  });
+
+  const initialFilter = fleetFilters.find(filter => filter.classList.contains('active'));
+  if (initialFilter && initialFilter.dataset.fleetFilter !== 'all') {
+    filterFleet(initialFilter.dataset.fleetFilter);
+  }
+}
+
 // Close user dropdown when clicking outside
 document.addEventListener('click', (e) => {
   const dropdown = document.getElementById('user-dropdown');

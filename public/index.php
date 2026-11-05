@@ -27,12 +27,7 @@ $sql = "SELECT v.*, c.name AS category
           )";
 
 $params = [];
-if (in_array($catFilter, ['Sedan', 'SUV', 'Premium'], true)) {
-    $sql .= " AND c.name = ?";
-    $params[] = $catFilter;
-}
-
-$sql .= " ORDER BY v.id DESC LIMIT 6";
+$sql .= " ORDER BY v.id DESC LIMIT 12";
 
 $featuredStmt = db()->prepare($sql);
 $featuredStmt->execute($params);
@@ -96,23 +91,23 @@ $featured = $featuredStmt->fetchAll();
 
       <!-- Category Filter Pills (like "New Car" pill in reference image) -->
       <div class="category-pills-bar" role="tablist" aria-label="Vehicle categories">
-        <a href="/index.php#fleet" class="cat-pill <?= empty($catFilter) ? 'active' : '' ?>">
+        <a href="#fleet" class="cat-pill <?= empty($catFilter) ? 'active' : '' ?>" data-fleet-filter="all">
           All Cars
         </a>
-        <a href="/index.php?category=Sedan#fleet" class="cat-pill <?= $catFilter === 'Sedan' ? 'active' : '' ?>">
+        <a href="#fleet" class="cat-pill <?= $catFilter === 'Sedan' ? 'active' : '' ?>" data-fleet-filter="Sedan">
           Sedan
         </a>
-        <a href="/index.php?category=SUV#fleet" class="cat-pill <?= $catFilter === 'SUV' ? 'active' : '' ?>">
+        <a href="#fleet" class="cat-pill <?= $catFilter === 'SUV' ? 'active' : '' ?>" data-fleet-filter="SUV">
           SUV
         </a>
-        <a href="/index.php?category=Premium#fleet" class="cat-pill <?= $catFilter === 'Premium' ? 'active' : '' ?>">
+        <a href="#fleet" class="cat-pill <?= $catFilter === 'Premium' ? 'active' : '' ?>" data-fleet-filter="Premium">
           Premium
         </a>
       </div>
     </div>
 
     <!-- 3-Column Vehicle Cards Grid -->
-    <div class="car-portal-grid">
+    <div class="car-portal-grid" id="landing-fleet-grid">
       <?php if (empty($featured)): ?>
         <div class="portal-empty-grid">
           <p>No operational vehicles found for this category at the moment.</p>
@@ -127,7 +122,7 @@ $featured = $featuredStmt->fetchAll();
             $imgUrl = vehicle_image($vehicle['image']);
             $desc = $vehicle['description'] ?: ($vehicle['category'] . ' with ' . strtolower($vehicle['transmission']) . ' transmission, well-maintained for comfort and fuel economy.');
           ?>
-          <article class="car-listing-card">
+          <article class="car-listing-card" data-fleet-category="<?= e($vehicle['category']) ?>">
             <div class="card-media-wrapper">
               <a href="/vehicle.php?id=<?= (int)$vehicle['id'] ?>" class="card-img-link" tabindex="-1" aria-hidden="true">
                 <div class="card-img" style="background-image: url('<?= e($imgUrl) ?>');" role="img" aria-label="<?= e($vehicle['brand'] . ' ' . $vehicle['model']) ?>"></div>
