@@ -9,7 +9,7 @@ $sidebarPage = basename($_SERVER['PHP_SELF']);
 ?>
 <aside class="dashboard-sidebar" aria-label="Customer dashboard navigation">
   <div class="sidebar-profile">
-    <span class="profile-avatar<?= $sidebarImage !== '' ? ' has-profile-image' : '' ?>"<?= $sidebarImage !== '' ? ' style="background-image:url(\'' . e($sidebarImage) . '\')"' : '' ?>><?= $sidebarImage === '' ? e(strtoupper(substr($sidebarName, 0, 1))) : '' ?></span>
+    <span class="profile-avatar<?= $sidebarImage !== '' ? ' has-profile-image' : '' ?>" <?= $sidebarImage !== '' ? ' style="background-image:url(\'' . e($sidebarImage) . '\')"' : '' ?>><?= $sidebarImage === '' ? e(strtoupper(substr($sidebarName, 0, 1))) : '' ?></span>
     <div>
       <strong><?= e($sidebarName) ?></strong>
       <span>Customer account</span>

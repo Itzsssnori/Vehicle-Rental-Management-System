@@ -4,7 +4,8 @@ if (session_status() !== PHP_SESSION_ACTIVE) {
     session_start();
 }
 
-function db(): PDO {
+function db(): PDO
+{
     static $pdo = null;
     if ($pdo === null) {
         // Use TCP by default so native PHP and XAMPP PHP do not depend on different Unix sockets.
@@ -34,9 +35,13 @@ function db(): PDO {
     }
     return $pdo;
 }
-function e($s): string { return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
+function e($s): string
+{
+    return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8');
+}
 
-function rental_days(string $start, string $end): int {
+function rental_days(string $start, string $end): int
+{
     $startDate = DateTimeImmutable::createFromFormat('!Y-m-d', $start);
     $endDate = DateTimeImmutable::createFromFormat('!Y-m-d', $end);
     if (!$startDate || !$endDate || $endDate < $startDate) {
@@ -45,14 +50,40 @@ function rental_days(string $start, string $end): int {
     return $startDate->diff($endDate)->days + 1;
 }
 
-function csrf_token(): string {
+function record_rental_status(PDO $pdo, int $rentalId, ?int $changedBy, string $newStatus, ?string $oldStatus = null, ?string $reason = null): void
+{
+    $history = $pdo->prepare(
+        'INSERT INTO rental_status_history (rental_id, changed_by, old_status, new_status, reason) VALUES (?, ?, ?, ?, ?)'
+    );
+    $history->execute([$rentalId, $changedBy, $oldStatus, $newStatus, $reason]);
+}
+
+function write_audit(PDO $pdo, ?int $userId, string $action, ?string $tableName = null, ?int $recordId = null, ?string $description = null): void
+{
+    $audit = $pdo->prepare(
+        'INSERT INTO audit_logs (user_id, action, table_name, record_id, description) VALUES (?, ?, ?, ?, ?)'
+    );
+    $audit->execute([$userId, $action, $tableName, $recordId, $description]);
+}
+
+function notify_user(PDO $pdo, int $userId, string $title, string $message, ?int $rentalId = null): void
+{
+    $notification = $pdo->prepare(
+        'INSERT INTO notifications (user_id, rental_id, title, message) VALUES (?, ?, ?, ?)'
+    );
+    $notification->execute([$userId, $rentalId, $title, $message]);
+}
+
+function csrf_token(): string
+{
     if (empty($_SESSION['csrf_token'])) {
         $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
     }
     return $_SESSION['csrf_token'];
 }
 
-function verify_csrf(): void {
+function verify_csrf(): void
+{
     $token = $_POST['csrf_token'] ?? '';
     if (!is_string($token) || !hash_equals(csrf_token(), $token)) {
         http_response_code(400);
@@ -60,7 +91,8 @@ function verify_csrf(): void {
     }
 }
 
-function vehicle_image(?string $image, string $fallback = '/assets/img/vehicle-placeholder.svg'): string {
+function vehicle_image(?string $image, string $fallback = '/assets/img/vehicle-placeholder.svg'): string
+{
     $image = trim((string)$image);
     if ($image === '') {
         return $fallback;
@@ -75,11 +107,13 @@ function vehicle_image(?string $image, string $fallback = '/assets/img/vehicle-p
     return '/assets/img/' . rawurlencode($filename);
 }
 
-function current_user(): ?array {
+function current_user(): ?array
+{
     return $_SESSION['user'] ?? null;
 }
 
-function require_customer(): array {
+function require_customer(): array
+{
     $user = current_user();
     if (!$user || ($user['role'] ?? '') !== 'customer') {
         header('Location: /login.php?redirect=/customer/dashboard.php');
@@ -88,7 +122,8 @@ function require_customer(): array {
     return $user;
 }
 
-function require_role(string $role): array {
+function require_role(string $role): array
+{
     $user = current_user();
     if (!$user || ($user['role'] ?? '') !== $role) {
         header('Location: /login.php');

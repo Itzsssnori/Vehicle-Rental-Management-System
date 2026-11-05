@@ -1,7 +1,7 @@
 <?php
 $title = 'Rental Oversight';
 require_once __DIR__ . '/../../config.php';
-require_role('admin');
+$user = require_role('admin');
 
 $message = '';
 $error = '';
@@ -24,7 +24,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $pdo = db();
             $pdo->beginTransaction();
             $rentalStmt = $pdo->prepare(
-                "SELECT r.id, r.vehicle_id, r.start_date, r.end_date, r.status,
+                "SELECT r.id, r.user_id, r.vehicle_id, r.start_date, r.end_date, r.status,
                         v.status AS vehicle_status
                  FROM rentals r
                  INNER JOIN vehicles v ON v.id = r.vehicle_id
@@ -45,6 +45,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 $update = $pdo->prepare("UPDATE rentals SET status = 'rejected', rejection_reason = ? WHERE id = ? AND status = 'pending'");
                 $update->execute([$reason, $rentalId]);
+                record_rental_status($pdo, $rentalId, (int)$user['id'], 'rejected', 'pending', $reason);
+                notify_user($pdo, (int)$rental['user_id'], 'Rental request rejected', 'Your rental request was rejected: ' . $reason, $rentalId);
+                write_audit($pdo, (int)$user['id'], 'rental_rejected', 'rentals', $rentalId, $reason);
                 $message = 'Rental request rejected.';
             } else {
                 if ($rental['vehicle_status'] !== 'operational') {
@@ -78,6 +81,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 $update = $pdo->prepare("UPDATE rentals SET status = 'confirmed' WHERE id = ? AND status = 'pending'");
                 $update->execute([$rentalId]);
+                record_rental_status($pdo, $rentalId, (int)$user['id'], 'confirmed', 'pending');
+                notify_user($pdo, (int)$rental['user_id'], 'Rental request approved', 'Your rental request has been approved.', $rentalId);
+                write_audit($pdo, (int)$user['id'], 'rental_approved', 'rentals', $rentalId, 'Administrator approved the rental request.');
                 $message = 'Rental request approved.';
             }
 
@@ -92,7 +98,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$sql = "SELECT r.id, r.start_date, r.end_date, r.actual_return, r.total_amount, r.status, r.created_at,
+$sql = "SELECT r.id, r.user_id, r.start_date, r.end_date, r.actual_return, r.total_amount, r.status, r.created_at,
                u.name AS customer_name, u.email AS customer_email,
                v.brand, v.model, v.category,
                COALESCE(SUM(p.amount), 0) AS paid_amount,

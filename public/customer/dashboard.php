@@ -71,6 +71,11 @@ $historyRentals = array_values(array_filter($rentals, static fn(array $r): bool 
     in_array($r['status'], ['completed', 'cancelled', 'rejected'], true)
 ));
 $historyRentals = array_slice($historyRentals, 0, 3);
+$notificationStmt = db()->prepare(
+    'SELECT id, title, message, created_at FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 5'
+);
+$notificationStmt->execute([$user['id']]);
+$notifications = $notificationStmt->fetchAll();
 ?>
 <main class="dashboard-page">
   <div class="dashboard-layout">
@@ -87,6 +92,19 @@ $historyRentals = array_slice($historyRentals, 0, 3);
       </section>
       <?php if (isset($_GET['requested'])): ?>
         <p class="note request-success" role="status">Your rental request was submitted successfully. Staff or an administrator will review it before confirmation.</p>
+      <?php endif; ?>
+      <?php if ($notifications): ?>
+        <section class="dashboard-section">
+          <div class="section-head"><div><p class="eyebrow">Updates</p><h2>Recent notifications</h2></div></div>
+          <div class="rental-list">
+            <?php foreach ($notifications as $notification): ?>
+              <article class="rental-row">
+                <div class="rental-main"><div><h3><?= e($notification['title']) ?></h3><p><?= e($notification['message']) ?></p></div></div>
+                <div class="rental-meta"><span><?= e(date('M j, Y g:i A', strtotime($notification['created_at']))) ?></span></div>
+              </article>
+            <?php endforeach; ?>
+          </div>
+        </section>
       <?php endif; ?>
 
       <section class="dashboard-stats" aria-label="Rental summary">

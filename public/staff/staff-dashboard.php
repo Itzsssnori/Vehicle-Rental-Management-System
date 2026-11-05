@@ -23,7 +23,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $pdo->beginTransaction();
 
             $rentalStmt = $pdo->prepare(
-                "SELECT r.id, r.vehicle_id, r.start_date, r.end_date, r.total_amount, r.status,
+                "SELECT r.id, r.user_id, r.vehicle_id, r.start_date, r.end_date, r.total_amount, r.status,
                         r.cancellation_requested,
                         v.status AS vehicle_status
                  FROM rentals r
@@ -49,10 +49,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($action === 'approve_cancel') {
                     $update = $pdo->prepare("UPDATE rentals SET status = 'cancelled', cancellation_requested = 0 WHERE id = ? AND cancellation_requested = 1");
                     $update->execute([$rentalId]);
+                    record_rental_status($pdo, $rentalId, (int)$user['id'], 'cancelled', $rental['status'], 'Cancellation approved.');
+                    notify_user($pdo, (int)$rental['user_id'], 'Cancellation approved', 'Your rental cancellation request was approved.', $rentalId);
+                    write_audit($pdo, (int)$user['id'], 'rental_cancelled', 'rentals', $rentalId, 'Staff approved the cancellation request.');
                     $message = 'Cancellation request approved.';
                 } else {
                     $update = $pdo->prepare("UPDATE rentals SET cancellation_requested = 0, cancellation_reason = ? WHERE id = ? AND cancellation_requested = 1");
                     $update->execute([$reason, $rentalId]);
+                    write_audit($pdo, (int)$user['id'], 'cancellation_rejected', 'rentals', $rentalId, $reason);
                     $message = 'Cancellation request rejected.';
                 }
             } elseif ($action === 'reject') {
@@ -65,6 +69,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 $update = $pdo->prepare("UPDATE rentals SET status = 'rejected', rejection_reason = ? WHERE id = ? AND status = 'pending'");
                 $update->execute([$reason, $rentalId]);
+                record_rental_status($pdo, $rentalId, (int)$user['id'], 'rejected', 'pending', $reason);
+                notify_user($pdo, (int)$rental['user_id'], 'Rental request rejected', 'Your rental request was rejected: ' . $reason, $rentalId);
+                write_audit($pdo, (int)$user['id'], 'rental_rejected', 'rentals', $rentalId, $reason);
                 $message = 'Rental request rejected.';
             } elseif ($action === 'approve') {
                 if ($rental['status'] !== 'pending') {
@@ -101,6 +108,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 $update = $pdo->prepare("UPDATE rentals SET status = 'confirmed' WHERE id = ? AND status = 'pending'");
                 $update->execute([$rentalId]);
+                record_rental_status($pdo, $rentalId, (int)$user['id'], 'confirmed', 'pending');
+                notify_user($pdo, (int)$rental['user_id'], 'Rental request approved', 'Your rental request has been approved.', $rentalId);
+                write_audit($pdo, (int)$user['id'], 'rental_approved', 'rentals', $rentalId, 'Staff approved the rental request.');
                 $message = 'Rental request approved.';
             } elseif ($action === 'start') {
                 if ($rental['status'] !== 'confirmed') {
@@ -111,6 +121,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 $update = $pdo->prepare("UPDATE rentals SET status = 'ongoing' WHERE id = ? AND status = 'confirmed'");
                 $update->execute([$rentalId]);
+                record_rental_status($pdo, $rentalId, (int)$user['id'], 'ongoing', 'confirmed');
+                notify_user($pdo, (int)$rental['user_id'], 'Rental started', 'Your rental is now marked as ongoing.', $rentalId);
+                write_audit($pdo, (int)$user['id'], 'rental_started', 'rentals', $rentalId);
                 $message = 'Rental marked as ongoing.';
             } elseif ($action === 'complete') {
                 if ($rental['status'] !== 'ongoing') {
@@ -118,6 +131,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 $update = $pdo->prepare("UPDATE rentals SET status = 'completed', actual_return = ? WHERE id = ? AND status = 'ongoing'");
                 $update->execute([date('Y-m-d'), $rentalId]);
+                record_rental_status($pdo, $rentalId, (int)$user['id'], 'completed', 'ongoing');
+                notify_user($pdo, (int)$rental['user_id'], 'Rental completed', 'Your rental has been marked as completed.', $rentalId);
+                write_audit($pdo, (int)$user['id'], 'rental_completed', 'rentals', $rentalId);
                 $message = 'Rental marked as completed.';
             } else {
                 if (!in_array($rental['status'], ['confirmed', 'ongoing', 'completed'], true)) {
@@ -136,6 +152,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 $payment = $pdo->prepare('INSERT INTO payments (rental_id, amount, method, recorded_by) VALUES (?, ?, ?, ?)');
                 $payment->execute([$rentalId, $amount, $method, $user['id']]);
+                write_audit($pdo, (int)$user['id'], 'payment_recorded', 'payments', (int)$pdo->lastInsertId(), 'Payment recorded for rental #' . $rentalId . '.');
+                notify_user($pdo, (int)$rental['user_id'], 'Payment recorded', 'A payment of ₱' . number_format($amount, 2) . ' was recorded for your rental.', $rentalId);
                 $message = 'Payment recorded.';
             }
 

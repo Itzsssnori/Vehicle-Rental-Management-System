@@ -117,7 +117,7 @@ Make sure Apache has `mod_rewrite` enabled and that `AllowOverride All` is permi
 
 ### MySQL database
 
-Start MySQL in XAMPP, open phpMyAdmin, and import [database/schema.sql](database/schema.sql). Configure the connection before opening the application:
+Start MySQL in XAMPP, open phpMyAdmin, and import [database/schema.sql](database/schema.sql). This is a fresh-install schema: importing it drops and recreates the `vrms` database, including all users, rentals, payments, vehicles, and related records. Back up the database first if it contains data you need.
 
 ```text
 DB_HOST=127.0.0.1
@@ -128,6 +128,22 @@ DB_PASS=vrms123
 ```
 
 These values can be supplied as Apache/PHP environment variables, or you can update the local values in [config.php](config.php). For a real deployment, use a dedicated database user and a password that is not committed to Git.
+
+After importing the fresh schema, create your demo accounts again:
+
+```bash
+sudo /opt/lampp/bin/php database/create-account.php \
+  --name="System Administrator" \
+  --email="admin@example.com" \
+  --password="choose-a-password" \
+  --role=admin
+```
+
+The backend records rental status changes in `rental_status_history`, operational actions in
+`audit_logs`, customer updates in `notifications`, and the base rental amount in
+`rental_charges`. These records are created automatically when customers submit requests
+and when staff or administrators review rentals, process payments, manage vehicles, or
+manage maintenance.
 
 ## PHP built-in development server
 

@@ -68,12 +68,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } else {
       $days = rental_days($start, $end);
       $total = (float)$vehicle['daily_rate'] * $days;
-      $insert = db()->prepare(
-        "INSERT INTO rentals (user_id, vehicle_id, start_date, end_date, total_amount, payment_method, purpose, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')"
-      );
-      $insert->execute([current_user()['id'], $id, $start, $end, $total, $paymentMethod, $purpose]);
-      $rentalId = (int)db()->lastInsertId();
+      $pdo = db();
+      $pdo->beginTransaction();
+      try {
+        $insert = $pdo->prepare(
+          "INSERT INTO rentals (user_id, vehicle_id, start_date, end_date, total_amount, payment_method, purpose, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')"
+        );
+        $insert->execute([current_user()['id'], $id, $start, $end, $total, $paymentMethod, $purpose]);
+        $rentalId = (int)$pdo->lastInsertId();
+        record_rental_status($pdo, $rentalId, null, 'pending');
+        $charge = $pdo->prepare(
+          "INSERT INTO rental_charges (rental_id, charge_type, description, quantity, unit_price, amount)
+           VALUES (?, 'rental', 'Base rental charge', ?, ?, ?)"
+        );
+        $charge->execute([$rentalId, $days, $vehicle['daily_rate'], $total]);
+        write_audit($pdo, (int)current_user()['id'], 'rental_created', 'rentals', $rentalId, 'Customer submitted a rental request.');
+        $pdo->commit();
+      } catch (Throwable $exception) {
+        if ($pdo->inTransaction()) {
+          $pdo->rollBack();
+        }
+        throw $exception;
+      }
       header('Location: /customer/dashboard.php?requested=' . $rentalId);
       exit;
     }

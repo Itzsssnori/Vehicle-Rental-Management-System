@@ -23,6 +23,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             $stmt = $pdo->prepare('INSERT INTO maintenance (vehicle_id, description, start_date, end_date) VALUES (?, ?, ?, ?)');
             $stmt->execute([$vehicleId, $description, $start, $end ?: null]);
+            write_audit($pdo, (int)current_user()['id'], 'maintenance_added', 'maintenance', (int)$pdo->lastInsertId(), $description);
             $message = 'Maintenance record added.';
         } elseif ($action === 'delete') {
             $id = filter_input(INPUT_POST, 'id', FILTER_VALIDATE_INT);
@@ -31,6 +32,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             $stmt = $pdo->prepare('DELETE FROM maintenance WHERE id = ?');
             $stmt->execute([$id]);
+            write_audit($pdo, (int)current_user()['id'], 'maintenance_removed', 'maintenance', $id);
             $message = 'Maintenance record removed.';
         } else {
             throw new RuntimeException('Invalid maintenance action.');

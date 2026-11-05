@@ -18,16 +18,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif ($action === 'approve' && $role === 'staff') {
         $stmt = db()->prepare("UPDATE users SET account_status = 'approved' WHERE id = ? AND role = 'staff'");
         $stmt->execute([$id]);
+        write_audit(db(), (int)$user['id'], 'staff_approved', 'users', $id);
         $message = 'Staff registration approved.';
     } elseif ($action === 'reject' && $role === 'staff') {
         $stmt = db()->prepare("UPDATE users SET account_status = 'rejected' WHERE id = ? AND role = 'staff'");
         $stmt->execute([$id]);
+        write_audit(db(), (int)$user['id'], 'staff_rejected', 'users', $id);
         $message = 'Staff registration rejected.';
     } elseif (!in_array($role, ['customer', 'staff', 'admin'], true)) {
         $error = 'Invalid account role.';
     } else {
         $stmt = db()->prepare('UPDATE users SET role = ? WHERE id = ?');
         $stmt->execute([$role, $id]);
+        write_audit(db(), (int)$user['id'], 'user_role_changed', 'users', $id, 'Role changed to ' . $role . '.');
         $message = 'Account role updated.';
     }
 }

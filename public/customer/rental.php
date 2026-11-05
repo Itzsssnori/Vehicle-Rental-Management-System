@@ -17,15 +17,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $rentalId) {
     if ($action !== 'cancel' || $reason === '') {
         $error = 'Invalid rental action.';
     } else {
-        $cancel = db()->prepare(
-            "UPDATE rentals SET cancellation_reason = ?, cancellation_requested = 1, cancellation_requested_at = CURRENT_TIMESTAMP
-             WHERE id = ? AND user_id = ? AND status IN ('pending', 'confirmed', 'ongoing') AND cancellation_requested = 0"
-        );
-        $cancel->execute([$reason, $rentalId, $user['id']]);
-        if ($cancel->rowCount() === 1) {
+        $pdo = db();
+        $pdo->beginTransaction();
+        try {
+            $cancel = $pdo->prepare(
+                "UPDATE rentals SET cancellation_reason = ?, cancellation_requested = 1, cancellation_requested_at = CURRENT_TIMESTAMP
+                 WHERE id = ? AND user_id = ? AND status IN ('pending', 'confirmed', 'ongoing') AND cancellation_requested = 0"
+            );
+            $cancel->execute([$reason, $rentalId, $user['id']]);
+            if ($cancel->rowCount() !== 1) {
+                throw new RuntimeException('This rental cannot receive another cancellation request.');
+            }
+            write_audit($pdo, (int)$user['id'], 'cancellation_requested', 'rentals', $rentalId, $reason);
+            $pdo->commit();
             $message = 'Your cancellation request has been submitted for staff review.';
-        } else {
-            $error = 'This rental cannot receive another cancellation request.';
+        } catch (Throwable $exception) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            error_log('Customer cancellation request failed: ' . $exception->getMessage());
+            $error = $exception instanceof RuntimeException
+                ? $exception->getMessage()
+                : 'The cancellation request could not be submitted. Please try again.';
         }
     }
 }

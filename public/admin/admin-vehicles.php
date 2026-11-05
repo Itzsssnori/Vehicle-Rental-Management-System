@@ -40,12 +40,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'UPDATE vehicles SET brand = ?, model = ?, category = ?, transmission = ?, seats = ?, daily_rate = ?, status = ?, image = ? WHERE id = ?'
                 );
                 $stmt->execute([$brand, $model, $category, $transmission, $seats, $rate, $status, $image ?: null, $id]);
+                write_audit($pdo, (int)$user['id'], 'vehicle_updated', 'vehicles', $id, $brand . ' ' . $model);
                 $message = 'Vehicle updated.';
             } else {
                 $stmt = $pdo->prepare(
                     'INSERT INTO vehicles (brand, model, category, transmission, seats, daily_rate, status, image) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
                 );
                 $stmt->execute([$brand, $model, $category, $transmission, $seats, $rate, $status, $image ?: null]);
+                write_audit($pdo, (int)$user['id'], 'vehicle_created', 'vehicles', (int)$pdo->lastInsertId(), $brand . ' ' . $model);
                 $message = 'Vehicle added.';
             }
         } elseif ($action === 'retire') {
@@ -55,6 +57,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             $stmt = $pdo->prepare("UPDATE vehicles SET status = 'retired' WHERE id = ?");
             $stmt->execute([$id]);
+            write_audit($pdo, (int)$user['id'], 'vehicle_retired', 'vehicles', $id);
             $message = 'Vehicle retired.';
         } else {
             throw new RuntimeException('Invalid fleet action.');
