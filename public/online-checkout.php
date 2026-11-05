@@ -1,12 +1,38 @@
 <?php
-$title = 'Secure Online Checkout - Car Rental Portal';
+$title = 'Secure Online Checkout - VELO';
 require_once __DIR__ . '/../config.php';
 require_once __DIR__ . '/../includes/payment.php';
 
 $user = require_customer();
+$pdo = db();
 $attemptId = filter_input(INPUT_GET, 'attempt', FILTER_VALIDATE_INT);
+$reservationId = filter_input(INPUT_GET, 'reservation_id', FILTER_VALIDATE_INT) ?? filter_input(INPUT_GET, 'reservation', FILTER_VALIDATE_INT);
 
-$stmt = db()->prepare(
+// Support direct access via reservation_id
+if (!$attemptId && $reservationId) {
+    $findAttempt = $pdo->prepare("SELECT id FROM payment_attempts WHERE reservation_id = ? AND provider = 'online' AND status IN ('created', 'pending') ORDER BY id DESC LIMIT 1");
+    $findAttempt->execute([$reservationId]);
+    $attemptId = (int)$findAttempt->fetchColumn();
+
+    if (!$attemptId) {
+        $checkRes = $pdo->prepare("SELECT * FROM reservations WHERE id = ? AND customer_id = ? AND status = 'confirmed' LIMIT 1");
+        $checkRes->execute([$reservationId, $user['id']]);
+        $resRow = $checkRes->fetch();
+        if ($resRow) {
+            $bal = rental_balance($pdo, $reservationId);
+            if ($bal['outstanding'] > 0.0001) {
+                $createAttempt = $pdo->prepare("INSERT INTO payment_attempts (reservation_id, provider, status, amount, currency) VALUES (?, 'online', 'pending', ?, 'PHP')");
+                $createAttempt->execute([$reservationId, $bal['outstanding']]);
+                $attemptId = (int)$pdo->lastInsertId();
+            } else {
+                header('Location: /payment-return.php?provider=online&reservation=' . $reservationId);
+                exit;
+            }
+        }
+    }
+}
+
+$stmt = $pdo->prepare(
     "SELECT pa.*, r.reference_number, r.customer_id, r.requested_pickup_at, r.requested_return_at,
             r.base_amount, r.total_amount, r.payment_method AS chosen_method,
             v.brand, v.model, v.year, v.image, v.daily_rate, v.transmission, v.fuel_type, v.seats,
@@ -46,7 +72,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
 
     if ($action === 'pay_now' || $action === 'success') {
-        $pdo = db();
         try {
             $pdo->beginTransaction();
             $providerPaymentId = 'ONL-' . date('Ymd') . '-' . strtoupper(bin2hex(random_bytes(4)));
@@ -63,7 +88,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $error = 'The online payment transaction could not be processed. Please try again.';
         }
     } elseif ($action === 'cancel') {
-        $pdo = db();
         $pdo->prepare("UPDATE payment_attempts SET status = 'cancelled', failure_reason = 'Cancelled by customer' WHERE id = ? AND status <> 'paid'")
             ->execute([(int)$attempt['id']]);
         header('Location: /customer/rental.php?id=' . (int)$attempt['reservation_id']);
@@ -91,7 +115,7 @@ include __DIR__ . '/../includes/header.php';
     <?php if ($error): ?>
       <div class="portal-alert-danger" role="alert" style="margin-bottom:24px;">
         <span class="alert-icon" aria-hidden="true">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
         </span>
         <span><?= e($error) ?></span>
       </div>
@@ -104,13 +128,13 @@ include __DIR__ . '/../includes/header.php';
           <div class="checkout-panel-head">
             <div>
               <span class="panel-eyebrow">Payment Gateway</span>
-              <h1 class="panel-title">Complete Your Payment</h1>
+              <h1 class="panel-title">Complete Your Settlement</h1>
             </div>
             <div class="gateway-logo-badge" aria-hidden="true">
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
             </div>
           </div>
-          <p class="panel-intro">Choose your preferred online settlement method. Payments are processed securely with instant reservation guarantee.</p>
+          <p class="panel-intro">Choose your preferred settlement method. Your reservation will be immediately guaranteed upon verification.</p>
 
           <!-- Payment Method Tabs -->
           <div class="checkout-method-tabs" role="tablist" aria-label="Payment method choices">
@@ -140,6 +164,39 @@ include __DIR__ . '/../includes/header.php';
 
             <!-- Tab 1: Credit / Debit Card -->
             <div class="checkout-tab-pane active" id="tab-card" role="tabpanel">
+              <!-- Interactive Luxury Virtual Card Preview -->
+              <div class="virtual-card-container">
+                <div class="virtual-card">
+                  <div class="card-top-row">
+                    <div class="card-chip-graphic" aria-hidden="true">
+                      <span class="card-chip-line-1"></span>
+                      <span class="card-chip-line-2"></span>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:12px;">
+                      <span class="card-contactless-icon" aria-hidden="true">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3"/><path d="M5.5 17.5A6.5 6.5 0 0 0 12 11c0-2.5-1-4-2-5.5"/><path d="M2.5 20.5A10.5 10.5 0 0 0 13 10c0-3.5-1.5-6-3-8"/></svg>
+                      </span>
+                      <span class="card-network-logo" id="card-network-display">VISA</span>
+                    </div>
+                  </div>
+
+                  <div class="card-number-display" id="card-number-mirror">
+                    4532 &bull;&bull;&bull;&bull; &bull;&bull;&bull;&bull; 7712
+                  </div>
+
+                  <div class="card-bottom-row">
+                    <div class="card-holder-group">
+                      <span class="card-label-tiny">Cardholder Name</span>
+                      <span class="card-holder-name-display" id="card-name-mirror"><?= e($attempt['customer_name'] ?: 'CUSTOMER NAME') ?></span>
+                    </div>
+                    <div class="card-expiry-group">
+                      <span class="card-label-tiny">Expires</span>
+                      <span class="card-expiry-display" id="card-expiry-mirror">12 / 28</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               <div class="card-brand-pills-row">
                 <span class="brand-pill">VISA</span>
                 <span class="brand-pill">Mastercard</span>
@@ -152,7 +209,12 @@ include __DIR__ . '/../includes/header.php';
                   <label for="card-holder-name">
                     <span>Cardholder Name</span>
                   </label>
-                  <input id="card-holder-name" type="text" name="card_name" placeholder="Full name as printed on card" value="<?= e($attempt['customer_name']) ?>" required>
+                  <div class="input-with-icon">
+                    <span class="input-icon" aria-hidden="true">
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                    </span>
+                    <input id="card-holder-name" type="text" name="card_name" placeholder="Full name as printed on card" value="<?= e($attempt['customer_name']) ?>" required>
+                  </div>
                 </div>
               </div>
 
@@ -176,7 +238,12 @@ include __DIR__ . '/../includes/header.php';
                   <label for="card-expiry">
                     <span>Expiration Date</span>
                   </label>
-                  <input id="card-expiry" type="text" name="card_expiry" placeholder="MM / YY" maxlength="7" value="12/28" required>
+                  <div class="input-with-icon">
+                    <span class="input-icon" aria-hidden="true">
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                    </span>
+                    <input id="card-expiry" type="text" name="card_expiry" placeholder="MM / YY" maxlength="7" value="12/28" required>
+                  </div>
                 </div>
                 <div class="form-group">
                   <label for="card-cvv">
@@ -202,18 +269,29 @@ include __DIR__ . '/../includes/header.php';
 
             <!-- Tab 2: GCash / Maya E-Wallet -->
             <div class="checkout-tab-pane" id="tab-ewallet" role="tabpanel" style="display:none;">
-              <div class="ewallet-info-box">
-                <div class="ewallet-logo-row">
-                  <span class="wallet-badge gcash">GCash</span>
-                  <span class="wallet-badge maya">Maya</span>
+              <div class="ewallet-selector-pills">
+                <div class="ewallet-choice-btn active choice-gcash" onclick="selectWallet('gcash')" id="choice-btn-gcash">
+                  <div style="display:flex;align-items:center;gap:10px;">
+                    <span class="wallet-badge gcash">GCash</span>
+                    <span style="font-size:0.86rem;font-weight:800;color:#0f172a;">GCash e-Wallet</span>
+                  </div>
+                  <span class="portal-badge badge-success" style="font-size:0.7rem;">Instant</span>
                 </div>
-                <p>Instant mobile payment. You will be prompted to authorize this transaction using your registered mobile e-wallet number.</p>
+
+                <div class="ewallet-choice-btn choice-maya" onclick="selectWallet('maya')" id="choice-btn-maya">
+                  <div style="display:flex;align-items:center;gap:10px;">
+                    <span class="wallet-badge maya">Maya</span>
+                    <span style="font-size:0.86rem;font-weight:800;color:#0f172a;">Maya App / Card</span>
+                  </div>
+                  <span class="portal-badge badge-neutral" style="font-size:0.7rem;">Active</span>
+                </div>
               </div>
 
               <div class="form-row">
                 <div class="form-group full-width">
                   <label for="ewallet-mobile">
                     <span>Registered Mobile Number</span>
+                    <span class="label-hint">Verification SMS will be sent</span>
                   </label>
                   <div class="input-with-icon">
                     <span class="input-icon" aria-hidden="true">
@@ -223,22 +301,60 @@ include __DIR__ . '/../includes/header.php';
                   </div>
                 </div>
               </div>
+
+              <div class="qr-mockup-frame">
+                <strong style="font-size:0.86rem;color:#0f172a;" id="wallet-instructions-title">Scan QR Code with GCash App</strong>
+                <span style="font-size:0.78rem;color:#64748b;">Open your mobile app, tap Scan QR, and verify the checkout amount of <strong>₱<?= number_format((float)$attempt['amount'], 2) ?></strong>.</span>
+                <div class="qr-mockup-box">
+                  <svg width="125" height="125" viewBox="0 0 24 24" fill="none" stroke="#0f172a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <rect width="5" height="5" x="3" y="3" rx="1"/>
+                    <rect width="5" height="5" x="16" y="3" rx="1"/>
+                    <rect width="5" height="5" x="3" y="16" rx="1"/>
+                    <path d="M21 16v3a2 2 0 0 1-2 2h-3"/>
+                    <path d="M21 21v.01"/>
+                    <path d="M12 7v3a2 2 0 0 1-2 2H7"/>
+                    <path d="M3 12h.01"/>
+                    <path d="M12 3h.01"/>
+                    <path d="M12 16v.01"/>
+                    <path d="M16 12h1"/>
+                    <path d="M21 12v.01"/>
+                    <path d="M12 21v-1"/>
+                  </svg>
+                </div>
+                <span style="font-size:0.74rem;color:#059669;font-weight:700;">Direct instant transaction guarantee</span>
+              </div>
             </div>
 
             <!-- Tab 3: Online Bank Transfer -->
             <div class="checkout-tab-pane" id="tab-bank" role="tabpanel" style="display:none;">
-              <div class="bank-info-box">
-                <p>Select your Philippine banking partner for instant online bank settlement:</p>
-                <div class="form-group full-width" style="margin-top:12px;">
-                  <label for="bank-selector"><span>Bank Institution</span></label>
-                  <select id="bank-selector" name="bank_name">
-                    <option value="bdo">BDO Unibank Online</option>
-                    <option value="bpi">BPI Online / Mobile</option>
-                    <option value="metrobank">Metrobank Direct</option>
-                    <option value="unionbank">UnionBank Online Banking</option>
-                    <option value="landbank">Landbank Link.Biz</option>
-                  </select>
+              <p style="font-size:0.86rem;color:#475569;margin:0 0 6px;">Select your Philippine banking institution for direct account debit settlement:</p>
+              <input type="hidden" name="bank_name" id="selected-bank-name" value="bdo">
+              <div class="bank-cards-grid">
+                <div class="bank-card-item active" onclick="selectBank('bdo')">
+                  <span class="bank-initial-badge">BDO</span>
+                  <span class="bank-name-label">BDO Online</span>
                 </div>
+                <div class="bank-card-item" onclick="selectBank('bpi')">
+                  <span class="bank-initial-badge">BPI</span>
+                  <span class="bank-name-label">BPI Online</span>
+                </div>
+                <div class="bank-card-item" onclick="selectBank('metrobank')">
+                  <span class="bank-initial-badge">MBTC</span>
+                  <span class="bank-name-label">Metrobank</span>
+                </div>
+                <div class="bank-card-item" onclick="selectBank('unionbank')">
+                  <span class="bank-initial-badge">UBP</span>
+                  <span class="bank-name-label">UnionBank</span>
+                </div>
+                <div class="bank-card-item" onclick="selectBank('landbank')">
+                  <span class="bank-initial-badge">LBP</span>
+                  <span class="bank-name-label">Landbank</span>
+                </div>
+              </div>
+
+              <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;margin-top:16px;">
+                <strong style="font-size:0.84rem;color:#0f172a;display:block;margin-bottom:2px;" id="bank-instructions-title">BDO Unibank Online Gateway</strong>
+                <span style="font-size:0.78rem;color:#64748b;">Upon clicking "Pay Now", you will be securely redirected to authenticate with your bank's secure OTP portal.</span>
               </div>
             </div>
 
@@ -254,7 +370,7 @@ include __DIR__ . '/../includes/header.php';
             </div>
           </form>
 
-          <!-- Cancel & Return Button (Separate Form to prevent submission validation) -->
+          <!-- Cancel & Return Button -->
           <form method="post" style="margin-top:12px;text-align:center;">
             <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
             <button type="submit" name="action" value="cancel" class="checkout-cancel-link">
@@ -359,7 +475,7 @@ include __DIR__ . '/../includes/header.php';
           <!-- Customer Notice -->
           <div class="summary-security-note">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-            <span>Once payment is confirmed, your receipt and booking confirmation will be ready instantly.</span>
+            <span>Once payment is confirmed, your official electronic receipt and vehicle dispatch authorization will be issued immediately.</span>
           </div>
         </div>
       </aside>
@@ -391,27 +507,90 @@ document.querySelectorAll('.method-tab').forEach(tab => {
   });
 });
 
-// Format Card Number Spacing
+// Interactive Card Number Mirroring & Spacing
 const cardInput = document.getElementById('card-number');
-if (cardInput) {
+const cardMirror = document.getElementById('card-number-mirror');
+const networkDisplay = document.getElementById('card-network-display');
+
+if (cardInput && cardMirror) {
   cardInput.addEventListener('input', (e) => {
     let val = e.target.value.replace(/\D/g, '');
     let formatted = val.match(/.{1,4}/g)?.join(' ') || '';
     e.target.value = formatted.substring(0, 19);
+
+    if (val.length === 0) {
+      cardMirror.textContent = '4532 •••• •••• 7712';
+    } else {
+      cardMirror.textContent = formatted;
+    }
+
+    // Network detection
+    if (networkDisplay) {
+      if (val.startsWith('4')) {
+        networkDisplay.textContent = 'VISA';
+      } else if (val.startsWith('5')) {
+        networkDisplay.textContent = 'MASTERCARD';
+      } else if (val.startsWith('3')) {
+        networkDisplay.textContent = 'AMEX';
+      } else {
+        networkDisplay.textContent = 'CARD';
+      }
+    }
   });
 }
 
-// Format Expiry MM / YY
+// Cardholder Name Mirroring
+const nameInput = document.getElementById('card-holder-name');
+const nameMirror = document.getElementById('card-name-mirror');
+if (nameInput && nameMirror) {
+  nameInput.addEventListener('input', (e) => {
+    nameMirror.textContent = e.target.value.trim().toUpperCase() || 'CUSTOMER NAME';
+  });
+}
+
+// Card Expiry Mirroring
 const expiryInput = document.getElementById('card-expiry');
-if (expiryInput) {
+const expiryMirror = document.getElementById('card-expiry-mirror');
+if (expiryInput && expiryMirror) {
   expiryInput.addEventListener('input', (e) => {
     let val = e.target.value.replace(/\D/g, '');
     if (val.length >= 2) {
       e.target.value = val.substring(0, 2) + '/' + val.substring(2, 4);
+      expiryMirror.textContent = e.target.value;
     } else {
       e.target.value = val;
+      expiryMirror.textContent = val ? val + '/YY' : '12 / 28';
     }
   });
+}
+
+// E-Wallet Toggle
+function selectWallet(wallet) {
+  document.getElementById('choice-btn-gcash').classList.toggle('active', wallet === 'gcash');
+  document.getElementById('choice-btn-maya').classList.toggle('active', wallet === 'maya');
+  const title = document.getElementById('wallet-instructions-title');
+  if (title) {
+    title.textContent = wallet === 'gcash' ? 'Scan QR Code with GCash App' : 'Scan QR Code with Maya App';
+  }
+}
+
+// Online Bank Selector
+function selectBank(bank) {
+  document.querySelectorAll('.bank-card-item').forEach(el => el.classList.remove('active'));
+  event.currentTarget.classList.add('active');
+  const input = document.getElementById('selected-bank-name');
+  if (input) input.value = bank;
+  const title = document.getElementById('bank-instructions-title');
+  if (title) {
+    const names = {
+      bdo: 'BDO Unibank Online Gateway',
+      bpi: 'BPI Online / Mobile Gateway',
+      metrobank: 'Metrobank Direct Gateway',
+      unionbank: 'UnionBank Online Banking',
+      landbank: 'Landbank Link.Biz Portal'
+    };
+    title.textContent = names[bank] || 'Bank Online Gateway';
+  }
 }
 </script>
 

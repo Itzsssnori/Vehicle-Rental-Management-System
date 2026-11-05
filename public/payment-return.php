@@ -1,10 +1,10 @@
 <?php
-$title = 'Payment Confirmed - Car Rental Portal';
+$title = 'Payment Confirmed - VELO';
 require_once __DIR__ . '/../config.php';
 require_once __DIR__ . '/../includes/payment.php';
 
 $user = require_customer();
-$reservationId = filter_input(INPUT_GET, 'reservation', FILTER_VALIDATE_INT);
+$reservationId = filter_input(INPUT_GET, 'reservation', FILTER_VALIDATE_INT) ?? filter_input(INPUT_GET, 'reservation_id', FILTER_VALIDATE_INT);
 if (!$reservationId) {
     http_response_code(400);
     exit('Invalid payment return request.');
@@ -79,9 +79,9 @@ include __DIR__ . '/../includes/header.php';
         </svg>
       </div>
       <span class="success-eyebrow">TRANSACTION CONFIRMED</span>
-      <h1 class="success-title">Payment Successful & Confirmed</h1>
+      <h1 class="success-title">Settlement Confirmed & Verified</h1>
       <p class="success-subtext">
-        Thank you, <?= e($reservation['customer_name']) ?>! Your payment for reservation <strong>#<?= e($reservation['reference_number']) ?></strong> has been received and verified. Your vehicle is guaranteed for dispatch.
+        Thank you, <?= e($reservation['customer_name']) ?>. Your payment for reservation <strong>#<?= e($reservation['reference_number']) ?></strong> has been recorded and verified. Your vehicle is guaranteed for dispatch.
       </p>
     </div>
 
@@ -98,8 +98,8 @@ include __DIR__ . '/../includes/header.php';
             </svg>
           </span>
           <div>
-            <strong class="receipt-brand-title">Car Rental <em>Portal</em></strong>
-            <span class="receipt-brand-sub">VELO VEHICLE RENTAL MANAGEMENT SYSTEM</span>
+            <strong class="receipt-brand-title">VELO <em>Fleet Operations</em></strong>
+            <span class="receipt-brand-sub">VEHICLE RENTAL MANAGEMENT SYSTEM</span>
           </div>
         </div>
 
@@ -125,12 +125,12 @@ include __DIR__ . '/../includes/header.php';
           <strong class="meta-value"><?= e($payment['reference_number'] ?? ('ONL-' . strtoupper(substr(md5((string)$reservationId), 0, 8)))) ?></strong>
         </div>
         <div class="meta-cell">
-          <span class="meta-label">Date & Time Issued</span>
+          <span class="meta-label">Date & Time Settled</span>
           <strong class="meta-value"><?= date('F j, Y · g:i A', strtotime($payment['paid_at'] ?? 'now')) ?></strong>
         </div>
         <div class="meta-cell">
-          <span class="meta-label">Payment Method</span>
-          <strong class="meta-value">Online Payment (Direct Settle)</strong>
+          <span class="meta-label">Settlement Gateway</span>
+          <strong class="meta-value"><?= e(ucwords(str_replace('_', ' ', $payment['method'] ?? 'Online Settlement'))) ?></strong>
         </div>
       </div>
 
@@ -147,13 +147,13 @@ include __DIR__ . '/../includes/header.php';
             <?php if ($reservation['customer_phone']): ?>
               <p class="customer-contact"><?= e($reservation['customer_phone']) ?></p>
             <?php endif; ?>
-            <span class="booking-ref-badge">Reservation: #<?= e($reservation['reference_number']) ?></span>
+            <span class="booking-ref-badge">Reservation Ref: #<?= e($reservation['reference_number']) ?></span>
           </div>
         </div>
 
         <!-- Vehicle Details -->
         <div class="receipt-col">
-          <span class="col-heading">Vehicle Reserved</span>
+          <span class="col-heading">Dispatched Vehicle</span>
           <div class="receipt-vehicle-card">
             <div class="receipt-vehicle-thumb" style="background-image: url('<?= e(vehicle_image($reservation['image'])) ?>');" role="img" aria-label="<?= e($reservation['brand'] . ' ' . $reservation['model']) ?>"></div>
             <div class="receipt-vehicle-meta">
@@ -176,7 +176,7 @@ include __DIR__ . '/../includes/header.php';
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
         </div>
         <div class="schedule-item">
-          <span class="schedule-lbl">Return Location & Date</span>
+          <span class="schedule-lbl">Return Location & Date (<?= $rentalDays ?> Day<?= $rentalDays === 1 ? '' : 's' ?>)</span>
           <strong><?= date('l, F j, Y · g:i A', strtotime($reservation['requested_return_at'])) ?></strong>
           <span class="hub-name"><?= e($reservation['return_location']) ?> (<?= e($reservation['return_address']) ?>)</span>
         </div>
@@ -197,7 +197,7 @@ include __DIR__ . '/../includes/header.php';
             <tr>
               <td>
                 <strong>Vehicle Rental - <?= e($reservation['brand'] . ' ' . $reservation['model']) ?></strong>
-                <span class="item-sub">Standard rental rate including unlimited mileage and basic maintenance</span>
+                <span class="item-sub">Standard operational vehicle rate including unlimited regional mileage</span>
               </td>
               <td class="text-center"><?= $rentalDays ?> Day<?= $rentalDays === 1 ? '' : 's' ?></td>
               <td class="text-right">₱<?= number_format((float)$reservation['base_amount'] / max(1, $rentalDays), 2) ?></td>
@@ -205,8 +205,8 @@ include __DIR__ . '/../includes/header.php';
             </tr>
             <tr>
               <td>
-                <strong>Comprehensive Roadside & Safety Coverage</strong>
-                <span class="item-sub">24/7 on-call roadside assistance throughout rental duration</span>
+                <strong>Comprehensive Roadside & Safety Protection</strong>
+                <span class="item-sub">24/7 dedicated dispatch roadside assistance</span>
               </td>
               <td class="text-center"><?= $rentalDays ?> Days</td>
               <td class="text-right">Included</td>
@@ -224,7 +224,7 @@ include __DIR__ . '/../includes/header.php';
           </tbody>
           <tfoot>
             <tr class="tfoot-subtotal">
-              <td colspan="3" class="text-right">Total Charges:</td>
+              <td colspan="3" class="text-right">Total Rental Charges:</td>
               <td class="text-right">₱<?= number_format((float)$reservation['total_amount'], 2) ?></td>
             </tr>
             <tr class="tfoot-paid">
@@ -243,10 +243,10 @@ include __DIR__ . '/../includes/header.php';
 
       <div class="receipt-footer-notes">
         <div class="footer-note-item">
-          <strong>Pickup Reminder:</strong> Please present a valid government-issued Driver's License and this electronic receipt at the hub counter.
+          <strong>Pickup Checklist:</strong> Please present a valid government-issued Driver's License and this electronic receipt at the hub counter.
         </div>
         <div class="footer-note-item">
-          <strong>Questions or Assistance?</strong> Contact our 24/7 service helpline at <strong>+63 897 456 1236</strong> or email <strong>info@velo.com</strong>.
+          <strong>Customer Support:</strong> Contact our operations dispatch desk at <strong>+63 897 456 1236</strong> or email <strong>info@velo.com</strong>.
         </div>
       </div>
     </section>

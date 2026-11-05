@@ -167,8 +167,17 @@ include __DIR__ . '/../../includes/header.php';
                       </div>
                     </td>
                     <td>
-                      <span class="portal-badge badge-neutral">
-                        <?= e(ucwords(str_replace('_', ' ', $pay['method']))) ?>
+                      <span class="portal-badge badge-neutral" style="gap:6px;">
+                        <?php if (in_array($pay['method'], ['card', 'online'], true)): ?>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
+                        <?php elseif (in_array($pay['method'], ['gcash', 'maya'], true)): ?>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+                        <?php elseif ($pay['method'] === 'bank_transfer'): ?>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="3" y1="21" x2="21" y2="21"/><line x1="3" y1="10" x2="21" y2="10"/><polyline points="5 6 12 3 19 6"/><line x1="4" y1="10" x2="4" y2="21"/><line x1="20" y1="10" x2="20" y2="21"/></svg>
+                        <?php else: ?>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="12" x="2" y="6" rx="2"/><circle cx="12" cy="12" r="2"/></svg>
+                        <?php endif; ?>
+                        <span><?= e(ucwords(str_replace('_', ' ', $pay['method']))) ?></span>
                       </span>
                     </td>
                     <td><?= e(date('M j, Y · g:i A', strtotime($pay['paid_at']))) ?></td>
