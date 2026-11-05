@@ -32,16 +32,63 @@ $sql .= " ORDER BY v.id DESC LIMIT 12";
 $featuredStmt = db()->prepare($sql);
 $featuredStmt->execute($params);
 $featured = $featuredStmt->fetchAll();
+
+// Dynamic Hero Car Banners: rotates on every page landing / reset or manual switch
+$heroBanners = [
+    [
+        'id' => 'hero-bmw',
+        'image' => '/assets/hero/hero-bmw-blue.jpg',
+        'badge' => 'BMW X5 xDrive M-Sport',
+        'eyebrow' => 'Move with confidence',
+        'headline' => 'Find the Right Vehicle for Your Next Journey',
+        'tag' => 'Luxury Performance SUV'
+    ],
+    [
+        'id' => 'hero-rangerover',
+        'image' => '/assets/hero/hero-rangerover-silver.jpg',
+        'badge' => 'Range Rover Sport HSE',
+        'eyebrow' => 'All-Terrain Elegance',
+        'headline' => 'Experience Premium Comfort & Unmatched Power',
+        'tag' => 'Flagship Luxury 4x4'
+    ],
+    [
+        'id' => 'hero-audi',
+        'image' => '/assets/hero/hero-audi-black.jpg',
+        'badge' => 'Audi RS7 Sportback Quattro',
+        'eyebrow' => 'Dynamic Distinction',
+        'headline' => 'Command the Open Road in Executive Style',
+        'tag' => 'Executive Performance GT'
+    ],
+    [
+        'id' => 'hero-mercedes',
+        'image' => '/assets/hero/hero-mercedes-red.jpg',
+        'badge' => 'Mercedes-AMG C63 S Coupe',
+        'eyebrow' => 'Crafted Precision',
+        'headline' => 'Arrive in Distinction with Certified Fleet',
+        'tag' => 'Grand Tourer'
+    ],
+    [
+        'id' => 'hero-porsche',
+        'image' => '/assets/hero/hero-porsche-orange.jpg',
+        'badge' => 'Porsche 911 Carrera GTS',
+        'eyebrow' => 'Pure Performance',
+        'headline' => 'Discover the Thrill of Dynamic Driving',
+        'tag' => 'High-Performance Sports'
+    ]
+];
+
+$activeHeroIndex = array_rand($heroBanners);
+$activeHero = $heroBanners[$activeHeroIndex];
 ?>
 
 <main class="portal-landing-page">
   <!-- Hero Section with Scenic Car Banner & Quick Booking Form -->
-  <section class="portal-hero">
+  <section class="portal-hero" id="portal-hero" style="background-image: url('<?= e($activeHero['image']) ?>');" data-hero-banners='<?= htmlspecialchars(json_encode($heroBanners), ENT_QUOTES, 'UTF-8') ?>' data-active-index="<?= (int)$activeHeroIndex ?>">
     <div class="hero-overlay-backdrop"></div>
     <div class="wrap portal-hero-container">
       <div class="portal-hero-content">
-        <span class="hero-badge-eyebrow"><span class="eyebrow-line"></span>Move with confidence</span>
-        <h1 class="hero-headline">Find the Right Vehicle for Your Next Journey</h1>
+        <span class="hero-badge-eyebrow" id="hero-badge-eyebrow"><span class="eyebrow-line"></span><span class="eyebrow-text"><?= e($activeHero['eyebrow']) ?></span></span>
+        <h1 class="hero-headline" id="hero-headline"><?= e($activeHero['headline']) ?></h1>
         <p class="hero-subtext">
           Browse our certified fleet of luxury, family, and economical vehicles with transparent daily rates and guaranteed reliability.
         </p>
@@ -77,6 +124,24 @@ $featured = $featuredStmt->fetchAll();
             </button>
           </div>
         </form>
+
+        <!-- Hero Vehicle Spotlight Indicator & Controls -->
+        <div class="hero-spotlight-bar">
+          <div class="hero-spotlight-pill">
+            <span class="spotlight-car-icon" aria-hidden="true">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2"/><circle cx="7" cy="17" r="2"/><path d="M9 17h6"/><circle cx="17" cy="17" r="2"/></svg>
+            </span>
+            <span class="spotlight-prefix">Spotlight:</span>
+            <strong class="spotlight-name" id="hero-spotlight-name"><?= e($activeHero['badge']) ?></strong>
+            <span class="spotlight-tag" id="hero-spotlight-tag"><?= e($activeHero['tag']) ?></span>
+          </div>
+
+          <div class="hero-switcher-dots" role="tablist" aria-label="Hero background car switcher">
+            <?php foreach ($heroBanners as $idx => $banner): ?>
+              <button type="button" class="hero-dot-btn <?= $idx === $activeHeroIndex ? 'active' : '' ?>" data-hero-switch="<?= (int)$idx ?>" aria-label="Switch background to <?= e($banner['badge']) ?>" title="<?= e($banner['badge']) ?>"></button>
+            <?php endforeach; ?>
+          </div>
+        </div>
       </div>
     </div>
   </section>

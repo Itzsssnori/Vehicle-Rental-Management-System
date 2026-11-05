@@ -58,3 +58,80 @@ document.querySelectorAll('[data-password-toggle]').forEach(toggle => {
     }
   });
 });
+
+// Landing page dynamic hero car rotator
+(function initHeroRotator() {
+  const hero = document.getElementById('portal-hero');
+  if (!hero) return;
+
+  const rawBanners = hero.dataset.heroBanners;
+  if (!rawBanners) return;
+
+  let banners = [];
+  try {
+    banners = JSON.parse(rawBanners);
+  } catch (err) {
+    return;
+  }
+  if (!Array.isArray(banners) || banners.length <= 1) return;
+
+  let currentIndex = parseInt(hero.dataset.activeIndex || '0', 10);
+  const nameEl = document.getElementById('hero-spotlight-name');
+  const tagEl = document.getElementById('hero-spotlight-tag');
+  const dots = hero.querySelectorAll('.hero-dot-btn');
+
+  function setHero(index) {
+    if (index < 0 || index >= banners.length) return;
+    currentIndex = index;
+    const banner = banners[currentIndex];
+
+    // Preload image before setting to prevent flicker
+    const img = new Image();
+    img.src = banner.image;
+    img.onload = () => {
+      hero.style.backgroundImage = `url('${banner.image}')`;
+    };
+
+    if (nameEl) nameEl.textContent = banner.badge;
+    if (tagEl) tagEl.textContent = banner.tag;
+
+    dots.forEach((dot, i) => {
+      dot.classList.toggle('active', i === currentIndex);
+    });
+  }
+
+  // Click on dots
+  dots.forEach(dot => {
+    dot.addEventListener('click', () => {
+      const idx = parseInt(dot.dataset.heroSwitch, 10);
+      if (!isNaN(idx)) {
+        setHero(idx);
+        resetAutoCycle();
+      }
+    });
+  });
+
+  // Auto-cycle every 8 seconds
+  let cycleTimer = null;
+  function startAutoCycle() {
+    cycleTimer = setInterval(() => {
+      const nextIndex = (currentIndex + 1) % banners.length;
+      setHero(nextIndex);
+    }, 8000);
+  }
+
+  function resetAutoCycle() {
+    if (cycleTimer) clearInterval(cycleTimer);
+    startAutoCycle();
+  }
+
+  // Pause on hover
+  hero.addEventListener('mouseenter', () => {
+    if (cycleTimer) clearInterval(cycleTimer);
+  });
+  hero.addEventListener('mouseleave', () => {
+    resetAutoCycle();
+  });
+
+  startAutoCycle();
+})();

@@ -2762,9 +2762,13 @@ body:has(.workspace-sidebar) > main.admin-page {
   min-height: 560px;
   display: flex;
   align-items: center;
-  background: #101318 url('https://images.pexels.com/photos/170811/pexels-photo-170811.jpeg?auto=compress&cs=tinysrgb&w=1600') center right / cover no-repeat;
+  background-color: #101318;
+  background-position: center right;
+  background-size: cover;
+  background-repeat: no-repeat;
   color: #ffffff;
   overflow: hidden;
+  transition: background-image 0.75s ease-in-out;
 }
 .hero-overlay-backdrop {
   position: absolute;
@@ -2885,6 +2889,93 @@ body:has(.workspace-sidebar) > main.admin-page {
 .hero-submit-btn:hover {
   transform: translateY(-1px);
   box-shadow: 0 8px 20px rgba(229, 62, 62, 0.35);
+}
+
+/* Hero Spotlight & Rotating Car Controls */
+.hero-spotlight-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 20px;
+  flex-wrap: wrap;
+}
+
+.hero-spotlight-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(16, 19, 24, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  color: #e2e8f0;
+  transition: all 0.3s ease;
+}
+
+.spotlight-car-icon {
+  color: #e53e3e;
+  display: inline-flex;
+  align-items: center;
+}
+
+.spotlight-prefix {
+  color: #94a3b8;
+  font-size: 0.76rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+
+.spotlight-name {
+  color: #ffffff;
+  font-weight: 800;
+}
+
+.spotlight-tag {
+  background: rgba(229, 62, 62, 0.9);
+  color: #ffffff;
+  font-size: 0.68rem;
+  font-weight: 800;
+  padding: 2px 7px;
+  border-radius: 10px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  margin-left: 4px;
+}
+
+.hero-switcher-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.hero-dot-btn {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.45);
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.hero-dot-btn:hover {
+  border-color: #ffffff;
+  background: rgba(255, 255, 255, 0.5);
+  transform: scale(1.15);
+}
+
+.hero-dot-btn.active {
+  width: 24px;
+  border-radius: 6px;
+  border-color: #e53e3e;
+  background: #e53e3e;
+  box-shadow: 0 0 10px rgba(229, 62, 62, 0.6);
 }
 
 /* Showcase Section */

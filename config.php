@@ -281,11 +281,17 @@ function vehicle_image(?string $image, string $fallback = '/assets/img/vehicle-p
     if (preg_match('#^https?://#i', $image)) {
         return $image;
     }
-    $filename = basename($image);
-    if (!is_file(__DIR__ . '/public/assets/img/' . $filename)) {
-        return $fallback;
+    if (str_starts_with($image, '/') && is_file(__DIR__ . '/public' . $image)) {
+        return $image;
     }
-    return '/assets/img/' . rawurlencode($filename);
+    $filename = basename($image);
+    if (is_file(__DIR__ . '/public/assets/vehicles/' . $filename)) {
+        return '/assets/vehicles/' . rawurlencode($filename);
+    }
+    if (is_file(__DIR__ . '/public/assets/img/' . $filename)) {
+        return '/assets/img/' . rawurlencode($filename);
+    }
+    return $fallback;
 }
 
 function current_user(): ?array

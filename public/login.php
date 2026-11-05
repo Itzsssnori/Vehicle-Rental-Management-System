@@ -140,6 +140,7 @@ include __DIR__ . '/../includes/header.php';
 
       <div class="auth-footer-links">
         <p>New to Car Rental Portal? <a href="/register.php">Create a customer account</a></p>
+        <p class="secondary-help">Staff access: Use administrator-provided credentials or <a href="/staff-register.php">submit staff registration</a></p>
         <p class="secondary-help">Didn't receive verification email? <a href="/resend-verification.php">Resend link</a></p>
       </div>
     </section>

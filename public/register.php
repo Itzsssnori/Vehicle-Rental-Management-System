@@ -77,8 +77,8 @@ include __DIR__ . '/../includes/header.php';
       </div>
 
       <div class="auth-header-block">
-        <span class="auth-eyebrow">Start Your Journey</span>
-        <h1 class="auth-title">Create Your Account</h1>
+        <span class="auth-eyebrow">Customer Registration</span>
+        <h1 class="auth-title">Create Customer Account</h1>
         <p class="auth-intro">Register as a customer to browse our fleet, verify availability, and book your next journey.</p>
       </div>
 
@@ -86,7 +86,7 @@ include __DIR__ . '/../includes/header.php';
         <span class="alert-icon" aria-hidden="true">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
         </span>
-        <span>A verification link will be sent to your email before completing reservations.</span>
+        <span>A verification link will be sent to your email before completing reservations. Staff accounts require administrator approval.</span>
       </div>
 
       <?php if ($error): ?>
@@ -180,6 +180,7 @@ include __DIR__ . '/../includes/header.php';
 
       <div class="auth-footer-links">
         <p>Already have an account? <a href="/login.php">Log in</a></p>
+        <p class="secondary-help">Operations or fleet personnel? <a href="/staff-register.php">Register for staff approval</a></p>
         <p class="secondary-help">Didn't receive verification email? <a href="/resend-verification.php">Resend link</a></p>
       </div>
     </section>
