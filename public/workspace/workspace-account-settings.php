@@ -7,92 +7,241 @@ if (!$user || !in_array($user['role'] ?? '', ['staff', 'admin'], true)) {
     exit;
 }
 
-$message = '';
-$error = '';
-$accountStmt = db()->prepare('SELECT id, name, email, role, account_status, created_at FROM users WHERE id = ? LIMIT 1');
+$profileMessage = '';
+$profileError = '';
+$passwordMessage = '';
+$passwordError = '';
+
+$accountStmt = db()->prepare(
+    "SELECT u.id, u.name, u.email, u.account_status, u.created_at, r.name AS role, u.password_hash
+     FROM users u
+     LEFT JOIN user_roles ur ON ur.user_id = u.id
+     LEFT JOIN roles r ON r.id = ur.role_id
+     WHERE u.id = ?
+     LIMIT 1"
+);
 $accountStmt->execute([(int)$user['id']]);
 $account = $accountStmt->fetch();
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     verify_csrf();
-    $name = trim($_POST['name'] ?? '');
-    $email = trim($_POST['email'] ?? '');
-    $currentPassword = $_POST['current_password'] ?? '';
-    $newPassword = $_POST['new_password'] ?? '';
-    $confirmPassword = $_POST['confirm_password'] ?? '';
+    $action = $_POST['action'] ?? '';
 
-    if ($name === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
-        $error = 'Enter a valid name and email address.';
-    } elseif ($newPassword !== '' && (strlen($newPassword) < 8 || $newPassword !== $confirmPassword)) {
-        $error = 'A new password must be at least 8 characters and match the confirmation.';
-    } else {
-        $duplicate = db()->prepare('SELECT id FROM users WHERE email = ? AND id <> ? LIMIT 1');
-        $duplicate->execute([$email, (int)$user['id']]);
-        if ($duplicate->fetch()) {
-            $error = 'That email address is already in use.';
+    if ($action === 'update_profile') {
+        $name = trim($_POST['name'] ?? '');
+        $email = trim($_POST['email'] ?? '');
+
+        if ($name === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            $profileError = 'Please enter a valid full name and email address.';
         } else {
-            $pdo = db();
-            if ($newPassword !== '') {
-                $passwordStmt = $pdo->prepare('SELECT password_hash FROM users WHERE id = ? LIMIT 1');
-                $passwordStmt->execute([(int)$user['id']]);
-                $passwordHash = $passwordStmt->fetchColumn();
-                if (!$currentPassword || !$passwordHash || !password_verify($currentPassword, $passwordHash)) {
-                    $error = 'Enter your current password to set a new password.';
-                }
-            }
-            if ($error === '') {
-                if ($newPassword !== '') {
-                    $update = $pdo->prepare('UPDATE users SET name = ?, email = ?, password_hash = ? WHERE id = ?');
-                    $update->execute([$name, $email, password_hash($newPassword, PASSWORD_DEFAULT), (int)$user['id']]);
-                } else {
-                    $update = $pdo->prepare('UPDATE users SET name = ?, email = ? WHERE id = ?');
-                    $update->execute([$name, $email, (int)$user['id']]);
-                }
+            $duplicate = db()->prepare('SELECT id FROM users WHERE email = ? AND id <> ? LIMIT 1');
+            $duplicate->execute([$email, (int)$user['id']]);
+            if ($duplicate->fetch()) {
+                $profileError = 'That email address is already in use by another account.';
+            } else {
+                $update = db()->prepare('UPDATE users SET name = ?, email = ? WHERE id = ?');
+                $update->execute([$name, $email, (int)$user['id']]);
                 $_SESSION['user']['name'] = $name;
                 $_SESSION['user']['email'] = $email;
-                $account = array_merge($account, ['name' => $name, 'email' => $email]);
-                $message = $newPassword !== '' ? 'Profile and password updated.' : 'Profile details updated.';
+                $account['name'] = $name;
+                $account['email'] = $email;
+                write_audit(db(), (int)$user['id'], 'profile_updated', 'users', (int)$user['id'], 'Updated workspace profile details');
+                $profileMessage = 'Profile identity details have been successfully updated.';
             }
+        }
+    } elseif ($action === 'change_password') {
+        $currentPassword = (string)($_POST['current_password'] ?? '');
+        $newPassword = (string)($_POST['new_password'] ?? '');
+        $confirmPassword = (string)($_POST['confirm_password'] ?? '');
+
+        if ($currentPassword === '' || $newPassword === '' || $confirmPassword === '') {
+            $passwordError = 'Please fill out all password fields.';
+        } elseif (!password_verify($currentPassword, $account['password_hash'])) {
+            $passwordError = 'The current password you entered is incorrect.';
+        } elseif (strlen($newPassword) < 8) {
+            $passwordError = 'Your new password must be at least 8 characters in length.';
+        } elseif ($newPassword !== $confirmPassword) {
+            $passwordError = 'The new password and confirmation password do not match.';
+        } else {
+            $newHash = password_hash($newPassword, PASSWORD_DEFAULT);
+            $updatePass = db()->prepare('UPDATE users SET password_hash = ? WHERE id = ?');
+            $updatePass->execute([$newHash, (int)$user['id']]);
+            $account['password_hash'] = $newHash;
+            write_audit(db(), (int)$user['id'], 'password_changed', 'users', (int)$user['id'], 'Updated workspace sign-in password');
+            $passwordMessage = 'Your account password has been successfully updated.';
         }
     }
 }
+
 include __DIR__ . '/../../includes/header.php';
 ?>
-<main class="admin-page workspace-account-page">
-  <div class="admin-heading">
-    <div><p class="eyebrow"><?= $user['role'] === 'admin' ? 'Administrator account' : 'Faculty / staff account' ?></p><h1>Account settings</h1><p>Manage your workspace identity and sign-in security.</p></div>
-    <a class="btn btn-navy" href="<?= $user['role'] === 'admin' ? '/admin/admin-dashboard.php' : '/staff/staff-dashboard.php' ?>">Back to workspace</a>
-  </div>
-  <?php if ($message): ?><p class="note request-success" role="status"><?= e($message) ?></p><?php endif; ?>
-  <?php if ($error): ?><p class="form-error" role="alert"><?= e($error) ?></p><?php endif; ?>
-  <div class="workspace-account-grid">
-    <section class="admin-card">
-      <p class="eyebrow">Profile</p>
-      <h2><?= e($user['role'] === 'admin' ? 'Administrator profile' : 'Staff profile') ?></h2>
-      <p class="admin-form-help">These details identify you in the VELO workspace and activity records.</p>
-      <form class="detail-form" method="post">
-        <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
-        <label>Full name<input name="name" value="<?= e($account['name']) ?>" required></label>
-        <label>Work email<input type="email" name="email" value="<?= e($account['email']) ?>" required></label>
-        <label>Role<input value="<?= e($user['role'] === 'admin' ? 'Administrator' : 'Faculty / Staff') ?>" disabled></label>
-        <label>Account status<input value="<?= e(ucfirst($account['account_status'])) ?>" disabled></label>
-        <button class="btn btn-coral" type="submit">Save profile</button>
-      </form>
-    </section>
-    <section class="admin-card">
-      <p class="eyebrow">Security</p>
-      <h2>Change password</h2>
-      <p class="admin-form-help">Use your current password to protect changes to your workspace account.</p>
-      <form class="detail-form" method="post">
-        <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
-        <input type="hidden" name="name" value="<?= e($account['name']) ?>">
-        <input type="hidden" name="email" value="<?= e($account['email']) ?>">
-        <label>Current password<span class="password-field"><input id="workspace-current-password" type="password" name="current_password" autocomplete="current-password"><button class="password-toggle" type="button" data-password-toggle="workspace-current-password" aria-controls="workspace-current-password" aria-pressed="false">Show</button></span></label>
-        <label>New password<span class="password-field"><input id="workspace-new-password" type="password" name="new_password" minlength="8" autocomplete="new-password"><button class="password-toggle" type="button" data-password-toggle="workspace-new-password" aria-controls="workspace-new-password" aria-pressed="false">Show</button></span></label>
-        <label>Confirm new password<span class="password-field"><input id="workspace-confirm-password" type="password" name="confirm_password" minlength="8" autocomplete="new-password"><button class="password-toggle" type="button" data-password-toggle="workspace-confirm-password" aria-controls="workspace-confirm-password" aria-pressed="false">Show</button></span></label>
-        <button class="btn btn-navy" type="submit">Update security</button>
-      </form>
-    </section>
+
+<main class="portal-customer-page">
+  <div class="portal-customer-layout">
+
+    <!-- Unified Sidebar Navigation -->
+    <?php include __DIR__ . '/../../includes/workspace-sidebar.php'; ?>
+
+    <!-- Main Workspace Content -->
+    <div class="customer-main-content">
+
+      <!-- Hero Greeting Banner -->
+      <section class="portal-hero-banner" aria-label="Account settings heading">
+        <div class="portal-hero-text">
+          <div class="portal-hero-eyebrow">
+            <span class="pulse-indicator" aria-hidden="true"></span>
+            <span>WORKSPACE SECURITY · ACCOUNT PROFILE</span>
+          </div>
+          <h1 class="portal-hero-title">Account Profile & Security</h1>
+          <p class="portal-hero-subtitle">
+            Manage your workspace identity, work email address, and sign-in authentication credentials.
+          </p>
+        </div>
+        <div class="portal-hero-actions">
+          <a href="<?= $user['role'] === 'admin' ? '/admin/admin-dashboard.php' : '/staff/staff-dashboard.php' ?>" class="btn btn-outline-white">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>
+            <span>Back to Dashboard</span>
+          </a>
+        </div>
+      </section>
+
+      <!-- 2-Column Grid: Profile & Security -->
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start;">
+
+        <!-- Card 1: Workspace Profile -->
+        <section class="portal-card">
+          <div class="portal-card-header">
+            <div class="portal-card-title-group">
+              <span style="font-size:0.72rem; font-weight:800; text-transform:uppercase; color:#e53e3e; letter-spacing:0.05em;">IDENTITY DETAILS</span>
+              <h2><?= $user['role'] === 'admin' ? 'Administrator Profile' : 'Operations Staff Profile' ?></h2>
+            </div>
+            <span class="portal-badge badge-success"><?= e(ucfirst($account['account_status'])) ?></span>
+          </div>
+
+          <?php if ($profileMessage): ?>
+            <div style="background:#ecfdf5; border-left:4px solid #10b981; padding:10px 14px; border-radius:6px; margin-bottom:14px; font-size:0.84rem; color:#065f46;">
+              <?= e($profileMessage) ?>
+            </div>
+          <?php endif; ?>
+
+          <?php if ($profileError): ?>
+            <div style="background:#fef2f2; border-left:4px solid #ef4444; padding:10px 14px; border-radius:6px; margin-bottom:14px; font-size:0.84rem; color:#991b1b;">
+              <?= e($profileError) ?>
+            </div>
+          <?php endif; ?>
+
+          <form method="post" style="display:flex; flex-direction:column; gap:14px;">
+            <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
+            <input type="hidden" name="action" value="update_profile">
+
+            <div>
+              <label for="name">Full Name</label>
+              <input type="text" id="name" name="name" value="<?= e($account['name']) ?>" required>
+            </div>
+
+            <div>
+              <label for="email">Work Email Address</label>
+              <input type="email" id="email" name="email" value="<?= e($account['email']) ?>" required>
+            </div>
+
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
+              <div>
+                <label>Assigned Role</label>
+                <input value="<?= e($user['role'] === 'admin' ? 'System Administrator' : 'Operations Staff') ?>" disabled>
+              </div>
+              <div>
+                <label>Account Status</label>
+                <input value="<?= e(ucfirst($account['account_status'])) ?>" disabled>
+              </div>
+            </div>
+
+            <div>
+              <span style="font-size:0.76rem; color:#94a3b8;">
+                Account registered on <?= e(date('F j, Y', strtotime($account['created_at']))) ?>
+              </span>
+            </div>
+
+            <button class="btn btn-coral" type="submit" style="margin-top:8px; justify-content:center; padding:10px;">
+              Save Profile Changes
+            </button>
+          </form>
+        </section>
+
+        <!-- Card 2: Security & Password -->
+        <section class="portal-card">
+          <div class="portal-card-header">
+            <div class="portal-card-title-group">
+              <span style="font-size:0.72rem; font-weight:800; text-transform:uppercase; color:#e53e3e; letter-spacing:0.05em;">AUTHENTICATION</span>
+              <h2>Change Password</h2>
+            </div>
+            <span class="portal-badge badge-neutral">Security Keys</span>
+          </div>
+
+          <?php if ($passwordMessage): ?>
+            <div style="background:#ecfdf5; border-left:4px solid #10b981; padding:10px 14px; border-radius:6px; margin-bottom:14px; font-size:0.84rem; color:#065f46;">
+              <?= e($passwordMessage) ?>
+            </div>
+          <?php endif; ?>
+
+          <?php if ($passwordError): ?>
+            <div style="background:#fef2f2; border-left:4px solid #ef4444; padding:10px 14px; border-radius:6px; margin-bottom:14px; font-size:0.84rem; color:#991b1b;">
+              <?= e($passwordError) ?>
+            </div>
+          <?php endif; ?>
+
+          <form method="post" style="display:flex; flex-direction:column; gap:14px;">
+            <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
+            <input type="hidden" name="action" value="change_password">
+
+            <div class="portal-form-group">
+              <label for="current-pwd">Current Password</label>
+              <div class="password-field">
+                <input id="current-pwd" type="password" name="current_password" required autocomplete="current-password" placeholder="Enter existing password">
+                <button class="password-toggle" type="button" data-password-toggle="current-pwd" aria-controls="current-pwd" aria-pressed="false">
+                  <span class="toggle-icon" aria-hidden="true">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                  </span>
+                  <span class="toggle-label">Show</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="portal-form-group">
+              <label for="new-pwd">New Password (Min 8 Characters)</label>
+              <div class="password-field">
+                <input id="new-pwd" type="password" name="new_password" minlength="8" required autocomplete="new-password" placeholder="Create strong password">
+                <button class="password-toggle" type="button" data-password-toggle="new-pwd" aria-controls="new-pwd" aria-pressed="false">
+                  <span class="toggle-icon" aria-hidden="true">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                  </span>
+                  <span class="toggle-label">Show</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="portal-form-group">
+              <label for="confirm-pwd">Confirm New Password</label>
+              <div class="password-field">
+                <input id="confirm-pwd" type="password" name="confirm_password" minlength="8" required autocomplete="new-password" placeholder="Re-type new password">
+                <button class="password-toggle" type="button" data-password-toggle="confirm-pwd" aria-controls="confirm-pwd" aria-pressed="false">
+                  <span class="toggle-icon" aria-hidden="true">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                  </span>
+                  <span class="toggle-label">Show</span>
+                </button>
+              </div>
+            </div>
+
+            <button class="btn btn-secondary" type="submit" style="margin-top:8px; justify-content:center; padding:10px;">
+              Update Security Credentials
+            </button>
+          </form>
+        </section>
+
+      </div>
+
+    </div>
   </div>
 </main>
+
 <?php include __DIR__ . '/../../includes/footer.php'; ?>

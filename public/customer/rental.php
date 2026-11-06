@@ -116,6 +116,19 @@ if ($reservation) {
     $attemptStmt = $pdo->prepare("SELECT * FROM payment_attempts WHERE reservation_id = ? ORDER BY id DESC LIMIT 1");
     $attemptStmt->execute([$reservationId]);
     $paymentAttempt = $attemptStmt->fetch();
+
+    // Operational Pickup & Return Records
+    $pickupRecord = null;
+    $returnRecord = null;
+    if ($reservation['rental_id']) {
+        $pStmt = $pdo->prepare("SELECT * FROM pickup_records WHERE rental_id = ? ORDER BY id DESC LIMIT 1");
+        $pStmt->execute([$reservation['rental_id']]);
+        $pickupRecord = $pStmt->fetch();
+
+        $rStmt = $pdo->prepare("SELECT * FROM return_records WHERE rental_id = ? ORDER BY id DESC LIMIT 1");
+        $rStmt->execute([$reservation['rental_id']]);
+        $returnRecord = $rStmt->fetch();
+    }
 }
 
 include __DIR__ . '/../../includes/header.php';
@@ -157,6 +170,25 @@ include __DIR__ . '/../../includes/header.php';
           'cancelled', 'rejected' => 'badge-danger',
           default => 'badge-neutral',
         };
+
+        // Complete 5-Stage Lifecycle Process Calculation
+        $isTerminalNegative = in_array($reservation['status'], ['cancelled', 'rejected'], true);
+        $currentStep = 1;
+        if ($isTerminalNegative) {
+          $currentStep = 2; // Terminal state at review
+        } elseif ($reservation['status'] === 'pending') {
+          $currentStep = 1; // Reservation submitted, awaiting review
+        } elseif ($reservation['status'] === 'confirmed' && empty($reservation['rental_id'])) {
+          $currentStep = 2; // Approved by staff, ready for turnover
+        } elseif (!empty($reservation['rental_id'])) {
+          if ($reservation['rental_status'] === 'ongoing') {
+            $currentStep = 4; // Vehicle turned over, active journey
+          } elseif (in_array($reservation['rental_status'], ['returned', 'completed'], true)) {
+            $currentStep = 5; // Vehicle returned, settlement & closure
+          } else {
+            $currentStep = 3; // Turnover handover
+          }
+        }
       ?>
         <!-- Notifications / Messages -->
         <?php if ($message): ?>
@@ -204,6 +236,106 @@ include __DIR__ . '/../../includes/header.php';
                   Rental: <?= e(ucfirst($reservation['rental_status'])) ?>
                 </span>
               <?php endif; ?>
+            </div>
+          </div>
+        </section>
+
+        <!-- Complete Rental Lifecycle Process Stepper -->
+        <section class="portal-process-stepper-card" aria-label="Rental lifecycle progress">
+          <div class="stepper-header">
+            <div class="stepper-header-title">
+              <span class="staff-live-dot" style="display:inline-block; vertical-align:middle; background:#e53e3e;" aria-hidden="true"></span>
+              <h3>Rental Journey Progression</h3>
+              <span>&bull; Step <?= $currentStep ?> of 5: <?= match($currentStep) {
+                1 => 'Reservation Requested',
+                2 => $isTerminalNegative ? 'Review Ended (' . ucfirst($reservation['status']) . ')' : 'Staff Review & Approval',
+                3 => 'Vehicle Turnover & Key Handover',
+                4 => 'Active Journey on the Road',
+                5 => $reservation['rental_status'] === 'completed' ? 'Final Settlement & Trip Completed' : 'Return Check-in & Settlement',
+                default => 'Processing'
+              } ?></span>
+            </div>
+            <div>
+              <?php if ($isTerminalNegative): ?>
+                <span class="portal-badge badge-danger"><?= e(ucfirst($reservation['status'])) ?></span>
+              <?php elseif ($currentStep === 4): ?>
+                <span class="portal-badge badge-brand">Active on Road</span>
+              <?php elseif ($currentStep === 5 && $reservation['rental_status'] === 'completed'): ?>
+                <span class="portal-badge badge-success">Completed &amp; Closed</span>
+              <?php elseif ($currentStep === 2 && $reservation['status'] === 'confirmed'): ?>
+                <span class="portal-badge badge-success">Confirmed &bull; Ready for Turnover</span>
+              <?php else: ?>
+                <span class="portal-badge badge-neutral"><?= e(ucfirst($reservation['status'])) ?></span>
+              <?php endif; ?>
+            </div>
+          </div>
+
+          <div class="stepper-track">
+            <!-- Step 1: Reservation Request -->
+            <div class="stepper-step <?= $currentStep > 1 ? 'is-complete' : 'is-active' ?>">
+              <div class="step-node">
+                <?php if ($currentStep > 1): ?>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8"><polyline points="20 6 9 17 4 12"/></svg>
+                <?php else: ?>
+                  <span>1</span>
+                <?php endif; ?>
+              </div>
+              <div class="step-label">1. Reservation</div>
+              <div class="step-subtext">Booked <?= date('M j', strtotime($reservation['created_at'])) ?></div>
+            </div>
+
+            <!-- Step 2: Staff Review & Approval -->
+            <div class="stepper-step <?= $isTerminalNegative ? 'is-cancelled' : ($currentStep > 2 ? 'is-complete' : ($currentStep === 2 ? 'is-active' : '')) ?>">
+              <div class="step-node">
+                <?php if ($isTerminalNegative): ?>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                <?php elseif ($currentStep > 2): ?>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8"><polyline points="20 6 9 17 4 12"/></svg>
+                <?php else: ?>
+                  <span>2</span>
+                <?php endif; ?>
+              </div>
+              <div class="step-label">2. Staff Review</div>
+              <div class="step-subtext"><?= $isTerminalNegative ? ucfirst($reservation['status']) : ($reservation['status'] === 'confirmed' ? 'Approved' : 'Awaiting Review') ?></div>
+            </div>
+
+            <!-- Step 3: Turnover & Handover -->
+            <div class="stepper-step <?= $currentStep > 3 ? 'is-complete' : ($currentStep === 3 ? 'is-active' : '') ?>">
+              <div class="step-node">
+                <?php if ($currentStep > 3): ?>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8"><polyline points="20 6 9 17 4 12"/></svg>
+                <?php else: ?>
+                  <span>3</span>
+                <?php endif; ?>
+              </div>
+              <div class="step-label">3. Turnover</div>
+              <div class="step-subtext"><?= $pickupRecord ? 'Key Handover Done' : ($reservation['status'] === 'confirmed' ? ($isPaid ? 'Ready for Handover' : 'Deposit/Payment Due') : 'Pending Review') ?></div>
+            </div>
+
+            <!-- Step 4: Active Journey -->
+            <div class="stepper-step <?= $currentStep > 4 ? 'is-complete' : ($currentStep === 4 ? 'is-active' : '') ?>">
+              <div class="step-node">
+                <?php if ($currentStep > 4): ?>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8"><polyline points="20 6 9 17 4 12"/></svg>
+                <?php else: ?>
+                  <span>4</span>
+                <?php endif; ?>
+              </div>
+              <div class="step-label">4. Active Journey</div>
+              <div class="step-subtext"><?= $reservation['rental_status'] === 'ongoing' ? 'On the Road' : ($currentStep > 4 ? 'Returned to Hub' : 'Scheduled') ?></div>
+            </div>
+
+            <!-- Step 5: Return Inspection & Settlement -->
+            <div class="stepper-step <?= $currentStep === 5 && $reservation['rental_status'] === 'completed' ? 'is-complete' : ($currentStep === 5 ? 'is-active' : '') ?>">
+              <div class="step-node">
+                <?php if ($reservation['rental_status'] === 'completed'): ?>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8"><polyline points="20 6 9 17 4 12"/></svg>
+                <?php else: ?>
+                  <span>5</span>
+                <?php endif; ?>
+              </div>
+              <div class="step-label">5. Settlement</div>
+              <div class="step-subtext"><?= $reservation['rental_status'] === 'completed' ? 'Finalized & Closed' : ($returnRecord ? 'Inspection Review' : 'Scheduled Return') ?></div>
             </div>
           </div>
         </section>
@@ -289,6 +421,91 @@ include __DIR__ . '/../../includes/header.php';
                 </div>
               <?php endif; ?>
             </section>
+
+            <!-- Turnover & Active Journey Operations Box -->
+            <?php if ($pickupRecord): ?>
+              <section class="rental-section-box" style="margin-top:0;">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:12px;">
+                  <div>
+                    <h2 style="font-size:1.1rem;font-weight:800;color:#0f172a;margin:0 0 4px;">Vehicle Handover &amp; Turnover Log</h2>
+                    <p style="font-size:0.82rem;color:#64748b;margin:0;">Official vehicle inspection and dispatch log recorded at turnover.</p>
+                  </div>
+                  <span class="portal-badge badge-success">Turnover Completed</span>
+                </div>
+
+                <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));gap:12px;background:#f8fafc;padding:14px;border-radius:10px;border:1px solid #e2e8f0;">
+                  <div>
+                    <span style="font-size:0.72rem;color:#64748b;text-transform:uppercase;font-weight:700;display:block;">Starting Mileage</span>
+                    <strong style="font-size:0.95rem;color:#0f172a;"><?= number_format((int)$pickupRecord['starting_mileage']) ?> km</strong>
+                  </div>
+                  <div>
+                    <span style="font-size:0.72rem;color:#64748b;text-transform:uppercase;font-weight:700;display:block;">Fuel Level</span>
+                    <strong style="font-size:0.95rem;color:#0f172a;"><?= number_format((float)$pickupRecord['starting_fuel_level'], 1) ?>%</strong>
+                  </div>
+                  <div>
+                    <span style="font-size:0.72rem;color:#64748b;text-transform:uppercase;font-weight:700;display:block;">Dispatched At</span>
+                    <strong style="font-size:0.88rem;color:#0f172a;"><?= date('M j, Y g:i A', strtotime($pickupRecord['picked_up_at'])) ?></strong>
+                  </div>
+                </div>
+
+                <?php if ($pickupRecord['condition_notes']): ?>
+                  <div style="margin-top:12px;padding:10px 12px;background:#f1f5f9;border-radius:8px;font-size:0.82rem;color:#334155;">
+                    <strong style="color:#0f172a;display:block;margin-bottom:2px;">Turnover Inspector Notes:</strong>
+                    <?= e($pickupRecord['condition_notes']) ?>
+                  </div>
+                <?php endif; ?>
+
+                <?php if ($reservation['rental_status'] === 'ongoing'): ?>
+                  <!-- Active Journey Assistance Banner -->
+                  <div style="margin-top:16px;padding:14px;background:#ecfdf5;border:1px solid #a7f3d0;border-radius:10px;">
+                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2.5"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                      <strong style="color:#065f46;font-size:0.88rem;">24/7 Roadside Assistance &amp; Fleet Operations Hotline</strong>
+                    </div>
+                    <p style="margin:0 0 8px;font-size:0.82rem;color:#047857;">For vehicle queries, return schedule adjustments, or roadside emergencies, contact dispatch:</p>
+                    <div style="display:flex;gap:12px;flex-wrap:wrap;font-size:0.84rem;font-weight:700;color:#065f46;">
+                      <span>Hotline: (02) 8888-VELO</span>
+                      <span>Mobile: +63 917 835 6835</span>
+                    </div>
+                  </div>
+                <?php endif; ?>
+              </section>
+            <?php endif; ?>
+
+            <!-- Return Inspection Summary Box -->
+            <?php if ($returnRecord): ?>
+              <section class="rental-section-box" style="margin-top:0;">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:12px;">
+                  <div>
+                    <h2 style="font-size:1.1rem;font-weight:800;color:#0f172a;margin:0 0 4px;">Return Inspection &amp; Check-in Log</h2>
+                    <p style="font-size:0.82rem;color:#64748b;margin:0;">Verified vehicle condition at check-in return.</p>
+                  </div>
+                  <span class="portal-badge badge-neutral">Return Recorded</span>
+                </div>
+
+                <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));gap:12px;background:#f8fafc;padding:14px;border-radius:10px;border:1px solid #e2e8f0;">
+                  <div>
+                    <span style="font-size:0.72rem;color:#64748b;text-transform:uppercase;font-weight:700;display:block;">Final Mileage</span>
+                    <strong style="font-size:0.95rem;color:#0f172a;"><?= number_format((int)$returnRecord['ending_mileage']) ?> km</strong>
+                  </div>
+                  <div>
+                    <span style="font-size:0.72rem;color:#64748b;text-transform:uppercase;font-weight:700;display:block;">Return Fuel</span>
+                    <strong style="font-size:0.95rem;color:#0f172a;"><?= number_format((float)$returnRecord['ending_fuel_level'], 1) ?>%</strong>
+                  </div>
+                  <div>
+                    <span style="font-size:0.72rem;color:#64748b;text-transform:uppercase;font-weight:700;display:block;">Returned At</span>
+                    <strong style="font-size:0.88rem;color:#0f172a;"><?= date('M j, Y g:i A', strtotime($returnRecord['returned_at'])) ?></strong>
+                  </div>
+                </div>
+
+                <?php if ($returnRecord['condition_notes']): ?>
+                  <div style="margin-top:12px;padding:10px 12px;background:#f1f5f9;border-radius:8px;font-size:0.82rem;color:#334155;">
+                    <strong style="color:#0f172a;display:block;margin-bottom:2px;">Check-in Inspector Notes:</strong>
+                    <?= e($returnRecord['condition_notes']) ?>
+                  </div>
+                <?php endif; ?>
+              </section>
+            <?php endif; ?>
 
             <!-- Cancellation Handling -->
             <?php if (in_array($reservation['status'], ['pending', 'confirmed'], true)): ?>

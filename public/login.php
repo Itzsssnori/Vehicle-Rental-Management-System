@@ -43,6 +43,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $error = 'Your staff registration is currently waiting for administrator approval.';
         } elseif ($user['account_status'] === 'rejected') {
             $error = 'Your staff registration was not approved. Please contact an administrator.';
+        } elseif ($user['account_status'] === 'suspended') {
+            $error = 'Your account has been suspended due to an unresolved vehicle return incident or policy violation. Please contact administration.';
+        } elseif ($user['account_status'] === 'archived') {
+            $error = 'This account has been archived and deactivated. Please contact an administrator.';
         } elseif (empty($user['email_verified_at'])) {
             $error = 'Please verify your email address before logging in.';
         } else {

@@ -132,6 +132,31 @@ function mark_customer_suspended(PDO $pdo, int $userId, int $reviewedBy, string 
     $standing->execute([$userId, $reviewedBy, $reason]);
 }
 
+function mark_customer_archived(PDO $pdo, int $userId, int $reviewedBy, string $reason): void
+{
+    $account = $pdo->prepare("UPDATE users SET account_status = 'archived' WHERE id = ?");
+    $account->execute([$userId]);
+    $standing = $pdo->prepare(
+        "INSERT INTO customer_account_standing (user_id, standing, reviewed_by, reason)
+         VALUES (?, 'suspended', ?, ?)
+         ON DUPLICATE KEY UPDATE standing = 'suspended', reviewed_by = VALUES(reviewed_by), reason = VALUES(reason)"
+    );
+    $standing->execute([$userId, $reviewedBy, $reason]);
+}
+
+function restore_customer_account(PDO $pdo, int $userId, int $reviewedBy): void
+{
+    $account = $pdo->prepare("UPDATE users SET account_status = 'approved' WHERE id = ?");
+    $account->execute([$userId]);
+    $standing = customer_standing($pdo, $userId)['standing'];
+    $stmt = $pdo->prepare(
+        "INSERT INTO customer_account_standing (user_id, standing, reviewed_by, reason)
+         VALUES (?, ?, ?, 'Account restored by administrator')
+         ON DUPLICATE KEY UPDATE standing = VALUES(standing), reviewed_by = VALUES(reviewed_by), reason = VALUES(reason)"
+    );
+    $stmt->execute([$userId, $standing, $reviewedBy]);
+}
+
 function record_rental_status(PDO $pdo, int $rentalId, ?int $changedBy, string $newStatus, ?string $oldStatus = null, ?string $reason = null): void
 {
     $history = $pdo->prepare(

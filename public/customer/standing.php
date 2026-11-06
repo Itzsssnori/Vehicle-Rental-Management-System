@@ -8,6 +8,25 @@ $standing = customer_standing($pdo, (int)$user['id']);
 $standingType = $standing['standing'] ?? 'good';
 $standingPoints = (int)($standing['points'] ?? 0);
 
+$message = '';
+$error = '';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    verify_csrf();
+    $action = $_POST['action'] ?? '';
+    if ($action === 'submit_appeal') {
+        $reason = trim($_POST['appeal_reason'] ?? '');
+        if ($reason === '') {
+            $error = 'Please provide the grounds or justification for your standing appeal.';
+        } else {
+            $ins = $pdo->prepare("INSERT INTO disputes (opened_by, reason, status) VALUES (?, ?, 'open')");
+            $ins->execute([$user['id'], $reason]);
+            write_audit($pdo, (int)$user['id'], 'appeal_submitted', 'users', $user['id'], $reason);
+            $message = 'Your penalty/standing appeal has been submitted for administrative review.';
+        }
+    }
+}
+
 // Fetch penalty events
 $penaltyStmt = $pdo->prepare(
     "SELECT event_type, points, reason, status, expires_at, created_at
@@ -15,6 +34,13 @@ $penaltyStmt = $pdo->prepare(
 );
 $penaltyStmt->execute([$user['id']]);
 $penaltyHistory = $penaltyStmt->fetchAll();
+
+// Fetch appeals and disputes
+$disputesStmt = $pdo->prepare(
+    "SELECT * FROM disputes WHERE opened_by = ? ORDER BY opened_at DESC"
+);
+$disputesStmt->execute([$user['id']]);
+$customerDisputes = $disputesStmt->fetchAll();
 
 include __DIR__ . '/../../includes/header.php';
 ?>
@@ -24,14 +50,46 @@ include __DIR__ . '/../../includes/header.php';
     <?php include __DIR__ . '/../../includes/customer-sidebar.php'; ?>
 
     <div class="customer-main-content">
-      <!-- Hero Banner -->
+      <!-- Hero Banner (Unified 38px actions) -->
       <section class="portal-hero-banner">
-        <div class="hero-greeting-content">
-          <span class="eyebrow">Customer Workspace</span>
-          <h1>Driving Standing & Fleet Privileges</h1>
+        <div class="portal-hero-text">
+          <div class="portal-hero-eyebrow">Customer Workspace</div>
+          <h2>Driving Standing &amp; Privileges</h2>
           <p>Review your account reliability rating, active penalty points, and institutional vehicle access privileges.</p>
         </div>
+        <div class="portal-hero-actions">
+          <a class="btn btn-coral" href="/vehicles.php">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <span>Browse Fleet</span>
+          </a>
+          <a class="btn btn-outline-white" href="/customer/my-rentals.php">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            <span>My Bookings</span>
+          </a>
+          <a class="btn btn-outline-white" href="/customer/payments.php">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
+            <span>Payments</span>
+          </a>
+        </div>
       </section>
+
+      <!-- Flash Notifications -->
+      <?php if ($message): ?>
+        <div class="portal-alert-success">
+          <span class="alert-icon" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+          </span>
+          <span><?= e($message) ?></span>
+        </div>
+      <?php endif; ?>
+      <?php if ($error): ?>
+        <div class="portal-alert-danger">
+          <span class="alert-icon" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          </span>
+          <span><?= e($error) ?></span>
+        </div>
+      <?php endif; ?>
 
       <!-- Large Standing Spotlight Card -->
       <section class="portal-card" style="padding:26px 28px;">
@@ -129,6 +187,66 @@ include __DIR__ . '/../../includes/header.php';
             </table>
           </div>
         <?php endif; ?>
+      </section>
+
+      <!-- Customer Penalty Appeals & Disputes -->
+      <section class="portal-card" id="appeals-section" style="margin-top:24px;">
+        <div class="portal-card-header">
+          <div class="portal-card-title-group">
+            <h2>Penalty Appeals &amp; Dispute Inquiries</h2>
+            <p>If a demerit penalty was recorded in error, under verified emergency, or with dispute grounds, file a review request.</p>
+          </div>
+        </div>
+
+        <?php if (!empty($customerDisputes)): ?>
+          <div style="margin-bottom:20px;">
+            <h3 style="font-size:0.92rem;font-weight:800;color:#0f172a;margin:0 0 10px;">Submitted Appeals History</h3>
+            <div style="display:flex;flex-direction:column;gap:10px;">
+              <?php foreach ($customerDisputes as $disp): ?>
+                <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:14px;">
+                  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px;">
+                    <div>
+                      <strong style="color:#0f172a;font-size:0.86rem;">Dispute #<?= (int)$disp['id'] ?></strong>
+                      <span style="font-size:0.75rem;color:#64748b;margin-left:8px;"><?= date('M j, Y g:i A', strtotime($disp['opened_at'])) ?></span>
+                    </div>
+                    <span class="portal-badge <?= match($disp['status']) {
+                      'resolved' => 'badge-success',
+                      'rejected' => 'badge-danger',
+                      'under_review' => 'badge-brand',
+                      default => 'badge-warning'
+                    } ?>">
+                      <?= e(ucwords(str_replace('_', ' ', $disp['status']))) ?>
+                    </span>
+                  </div>
+                  <p style="margin:0 0 6px;font-size:0.84rem;color:#334155;"><?= e($disp['reason']) ?></p>
+                  <?php if ($disp['resolution']): ?>
+                    <div style="background:#ffffff;border-left:3px solid #10b981;padding:8px 12px;border-radius:6px;font-size:0.8rem;color:#065f46;margin-top:6px;">
+                      <strong>Administrative Resolution:</strong> <?= e($disp['resolution']) ?>
+                    </div>
+                  <?php endif; ?>
+                </div>
+              <?php endforeach; ?>
+            </div>
+          </div>
+        <?php endif; ?>
+
+        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:18px;">
+          <h3 style="font-size:0.92rem;font-weight:800;color:#0f172a;margin:0 0 6px;">Submit a Standing or Demerit Appeal</h3>
+          <p style="font-size:0.82rem;color:#64748b;margin:0 0 14px;">Provide clear factual details regarding your vehicle return, scheduling discrepancy, or emergency documentation.</p>
+
+          <form method="post" action="standing.php">
+            <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
+            <input type="hidden" name="action" value="submit_appeal">
+            <div class="settings-field-group">
+              <label for="appeal_reason">Grounds for Penalty Appeal / Dispute</label>
+              <textarea id="appeal_reason" name="appeal_reason" rows="3" required placeholder="Describe the circumstances regarding the penalty points, return verification, or incident..."></textarea>
+            </div>
+            <button type="submit" class="btn btn-coral" style="margin-top:12px;height:38px;padding:0 18px;">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+              <span>Submit Appeal for Review</span>
+            </button>
+          </form>
+        </div>
       </section>
     </div>
   </div>

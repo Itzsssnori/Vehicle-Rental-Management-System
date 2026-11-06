@@ -106,17 +106,27 @@ include __DIR__ . '/../../includes/header.php';
     <?php include __DIR__ . '/../../includes/customer-sidebar.php'; ?>
 
     <div class="customer-main-content">
-      <!-- Page Hero Header -->
+      <!-- Page Hero Header (Unified 38px actions) -->
       <section class="portal-hero-banner">
-        <div class="hero-greeting-content">
-          <span class="eyebrow">Customer Workspace</span>
-          <h1>My Rentals & Bookings</h1>
+        <div class="portal-hero-text">
+          <div class="portal-hero-eyebrow">Customer Workspace</div>
+          <h2>My Rentals &amp; Bookings</h2>
           <p>Review active vehicle dispatches, upcoming reservations, and historical trip logs.</p>
         </div>
-        <a class="portal-btn-primary" href="/vehicles.php" style="white-space:nowrap;">
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2"/><circle cx="7" cy="17" r="2"/><path d="M9 17h6"/><circle cx="17" cy="17" r="2"/></svg>
-          <span>Reserve Another Car</span>
-        </a>
+        <div class="portal-hero-actions">
+          <a class="btn btn-coral" href="/vehicles.php">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <span>Browse Fleet</span>
+          </a>
+          <a class="btn btn-outline-white" href="/customer/payments.php">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
+            <span>Payments</span>
+          </a>
+          <a class="btn btn-outline-white" href="/customer/standing.php">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            <span>Standing</span>
+          </a>
+        </div>
       </section>
 
       <!-- Filter Tabs & Search Bar -->

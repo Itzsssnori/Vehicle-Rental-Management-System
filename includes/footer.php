@@ -16,8 +16,8 @@
         Practical and dependable vehicle rentals for business, family, and leisure trips. Compare rates, reserve easily, and travel with peace of mind.
       </p>
       <div class="footer-trust-badges">
-        <span class="trust-pill">✓ Multi-point Inspected</span>
-        <span class="trust-pill">✓ Flexible Terms</span>
+        <span class="trust-pill"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="display:inline-block; vertical-align:middle; margin-right:4px;"><polyline points="20 6 9 17 4 12"/></svg>Multi-point Inspected</span>
+        <span class="trust-pill"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="display:inline-block; vertical-align:middle; margin-right:4px;"><polyline points="20 6 9 17 4 12"/></svg>Flexible Terms</span>
       </div>
     </div>
 
@@ -38,8 +38,9 @@
       <h4 class="footer-heading">Customer Portal</h4>
       <ul class="footer-nav-list">
         <?php if (current_user()): ?>
-          <li><a href="<?= current_user()['role'] === 'customer' ? '/customer/dashboard.php' : (current_user()['role'] === 'staff' ? '/staff/staff-dashboard.php' : '/admin/admin-dashboard.php') ?>">Dashboard</a></li>
-          <?php if (current_user()['role'] === 'customer'): ?>
+          <?php $userRole = current_user()['role'] ?? 'customer'; ?>
+          <li><a href="<?= $userRole === 'customer' ? '/customer/dashboard.php' : ($userRole === 'staff' ? '/staff/staff-dashboard.php' : '/admin/admin-dashboard.php') ?>">Dashboard</a></li>
+          <?php if ($userRole === 'customer'): ?>
             <li><a href="/customer/my-rentals.php">My Bookings & Rentals</a></li>
             <li><a href="/customer/account-settings.php">Account Settings</a></li>
           <?php endif; ?>

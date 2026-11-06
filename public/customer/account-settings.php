@@ -86,17 +86,22 @@ include __DIR__ . '/../../includes/header.php';
     <?php include __DIR__ . '/../../includes/customer-sidebar.php'; ?>
 
     <div class="customer-main-content">
-      <!-- Page Hero Header -->
+      <!-- Page Hero Header (Unified 38px actions) -->
       <section class="portal-hero-banner">
-        <div class="hero-greeting-content">
-          <span class="eyebrow">Settings & Security</span>
-          <h1>Account Profile & Security</h1>
+        <div class="portal-hero-text">
+          <div class="portal-hero-eyebrow">Settings &amp; Security</div>
+          <h2>Account Profile &amp; Security</h2>
           <p>Manage your verified contact credentials, update security keys, and review driving trust standing.</p>
         </div>
-        <div style="display:flex;align-items:center;gap:8px;">
-          <span class="portal-badge badge-neutral" style="font-size:0.82rem;padding:6px 14px;background:rgba(255,255,255,0.12);color:#ffffff;border:1px solid rgba(255,255,255,0.22);white-space:nowrap;">
-            Verified Customer
-          </span>
+        <div class="portal-hero-actions">
+          <a class="btn btn-coral" href="/vehicles.php">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <span>Browse Fleet</span>
+          </a>
+          <a class="btn btn-outline-white" href="/customer/my-rentals.php">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            <span>My Bookings</span>
+          </a>
         </div>
       </section>
 

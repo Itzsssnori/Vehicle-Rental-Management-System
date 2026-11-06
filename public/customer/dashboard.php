@@ -128,15 +128,32 @@ include __DIR__ . '/../../includes/header.php';
     <div class="customer-main-content">
       <!-- Top Greeting Banner -->
       <section class="portal-hero-banner" id="overview">
-        <div class="hero-greeting-content">
-          <span class="eyebrow">Customer Workspace</span>
-          <h1>Good day, <?= e($account['name']) ?></h1>
-          <p>Track your reservations, review trip dispatches, and manage your payments securely.</p>
+        <div class="portal-hero-text">
+          <div class="portal-hero-eyebrow">
+            <span class="pulse-indicator" aria-hidden="true"></span>
+            <span>CUSTOMER WORKSPACE</span>
+          </div>
+          <h1 class="portal-hero-title">Good day, <?= e(explode(' ', $account['name'])[0]) ?></h1>
+          <p class="portal-hero-subtitle">Track your active reservations, review trip dispatches, and manage your payments securely.</p>
         </div>
-        <a class="portal-btn-primary" href="/vehicles.php" style="white-space:nowrap;">
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2"/><circle cx="7" cy="17" r="2"/><path d="M9 17h6"/><circle cx="17" cy="17" r="2"/></svg>
-          <span>Find a Vehicle</span>
-        </a>
+        <div class="portal-hero-actions">
+          <a class="btn btn-coral" href="/vehicles.php">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2"/><circle cx="7" cy="17" r="2"/><path d="M9 17h6"/><circle cx="17" cy="17" r="2"/></svg>
+            <span>Find a Vehicle</span>
+          </a>
+          <a class="btn btn-outline-white" href="/customer/my-rentals.php">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            <span>My Bookings</span>
+          </a>
+          <a class="btn btn-outline-white" href="/customer/payments.php">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
+            <span>Payments</span>
+          </a>
+          <a class="btn btn-outline-white" href="/customer/standing.php">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            <span>Standing</span>
+          </a>
+        </div>
       </section>
 
       <?php if (isset($_GET['requested'])): ?>

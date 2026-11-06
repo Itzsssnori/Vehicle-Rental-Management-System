@@ -98,14 +98,15 @@
             <div class="dropdown-popover" id="user-dropdown-menu">
               <div class="dropdown-popover-header">
                 <strong><?= e(current_user()['name']) ?></strong>
-                <span class="dropdown-role-badge role-<?= e(current_user()['role']) ?>"><?= e(ucfirst(current_user()['role'])) ?></span>
+                <?php $currRole = current_user()['role'] ?? 'customer'; ?>
+                <span class="dropdown-role-badge role-<?= e($currRole) ?>"><?= e(ucfirst($currRole)) ?></span>
               </div>
               <div class="dropdown-popover-body">
-                <a href="<?= current_user()['role'] === 'admin' ? '/admin/admin-dashboard.php' : (current_user()['role'] === 'staff' ? '/staff/staff-dashboard.php' : '/customer/dashboard.php') ?>" class="dropdown-link">
+                <a href="<?= $currRole === 'admin' ? '/admin/admin-dashboard.php' : ($currRole === 'staff' ? '/staff/staff-dashboard.php' : '/customer/dashboard.php') ?>" class="dropdown-link">
                   <span class="dropdown-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span>
                   <span>Dashboard</span>
                 </a>
-                <?php if (current_user()['role'] === 'customer'): ?>
+                <?php if ($currRole === 'customer'): ?>
                   <a href="/customer/my-rentals.php" class="dropdown-link">
                     <span class="dropdown-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 17h14l1-5-2-4H6L4 12l1 5Z"/><circle cx="7.5" cy="17" r="1.5"/><circle cx="16.5" cy="17" r="1.5"/></svg></span>
                     <span>My Rentals</span>
@@ -150,7 +151,7 @@
 </header>
 
 <?php
-$workspacePages = ['staff-dashboard.php', 'admin-dashboard.php', 'admin-vehicles.php', 'admin-rentals.php', 'admin-maintenance.php', 'admin-users.php', 'admin-reports.php', 'workspace-account-settings.php'];
+$workspacePages = [];
 if (current_user() && current_user()['role'] !== 'customer' && in_array(basename($_SERVER['PHP_SELF']), $workspacePages, true)) {
     include __DIR__ . '/workspace-sidebar.php';
 }
@@ -168,8 +169,15 @@ if (current_user() && current_user()['role'] !== 'customer' && in_array(basename
         const links = [...sidebar.querySelectorAll('[data-sidebar-section]')];
         let activeSection = null;
         if (page === 'staff-dashboard.php') {
+          const tab = new URLSearchParams(window.location.search).get('tab');
           const section = new URLSearchParams(window.location.search).get('section');
-          activeSection = section === 'operations' ? 'operations' : section === 'requests' ? 'requests' : 'overview';
+          if (tab) {
+            activeSection = tab;
+          } else if (section) {
+            activeSection = section === 'operations' ? 'pickups' : section === 'requests' ? 'reservations' : section;
+          } else {
+            activeSection = 'overview';
+          }
         } else if (page === 'dashboard.php' && hash === 'account-modal') {
           activeSection = 'account';
         } else if (page === 'account-settings.php') {

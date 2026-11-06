@@ -68,12 +68,26 @@ include __DIR__ . '/../../includes/header.php';
     <?php include __DIR__ . '/../../includes/customer-sidebar.php'; ?>
 
     <div class="customer-main-content">
-      <!-- Hero Banner -->
+      <!-- Hero Banner (Unified 38px actions) -->
       <section class="portal-hero-banner">
-        <div class="hero-greeting-content">
-          <span class="eyebrow">Customer Workspace</span>
-          <h1>Payments & Official Receipts</h1>
+        <div class="portal-hero-text">
+          <div class="portal-hero-eyebrow">Customer Workspace</div>
+          <h2>Payments &amp; Official Receipts</h2>
           <p>Access your complete billing records, settled electronic transaction slips, and itemized rental fee ledgers.</p>
+        </div>
+        <div class="portal-hero-actions">
+          <a class="btn btn-coral" href="/vehicles.php">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <span>Browse Fleet</span>
+          </a>
+          <a class="btn btn-outline-white" href="/customer/my-rentals.php">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            <span>My Bookings</span>
+          </a>
+          <a class="btn btn-outline-white" href="/customer/standing.php">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            <span>Standing</span>
+          </a>
         </div>
       </section>
 
