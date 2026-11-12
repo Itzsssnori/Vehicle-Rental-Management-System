@@ -4,6 +4,33 @@ if (session_status() !== PHP_SESSION_ACTIVE) {
     session_start();
 }
 
+// Automatically load local .env (or fallback to .env.example) if present
+$envFilePath = is_file(__DIR__ . '/.env') ? __DIR__ . '/.env' : (is_file(__DIR__ . '/.env.example') ? __DIR__ . '/.env.example' : null);
+if ($envFilePath) {
+    $envLines = file($envFilePath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+    foreach ($envLines as $envLine) {
+        $envLine = trim($envLine);
+        if ($envLine === '' || str_starts_with($envLine, '#')) {
+            continue;
+        }
+        if (str_contains($envLine, '=')) {
+            [$envKey, $envVal] = explode('=', $envLine, 2);
+            $envKey = trim($envKey);
+            $envVal = trim($envVal);
+            if ((str_starts_with($envVal, '"') && str_ends_with($envVal, '"')) || (str_starts_with($envVal, "'") && str_ends_with($envVal, "'"))) {
+                $envVal = substr($envVal, 1, -1);
+            }
+            if (getenv($envKey) === false || getenv($envKey) === '') {
+                putenv("{$envKey}={$envVal}");
+                $_ENV[$envKey] = $envVal;
+                $_SERVER[$envKey] = $envVal;
+            }
+        }
+    }
+}
+
+require_once __DIR__ . '/includes/mailer.php';
+
 function db(): PDO
 {
     static $pdo = null;
@@ -226,7 +253,16 @@ function auth_token_hash(string $token): string
 
 function app_url(string $path): string
 {
-    $base = rtrim((string)(getenv('APP_URL') ?: 'http://vrms.local'), '/');
+    $env = getenv('APP_URL');
+    if ($env) {
+        $base = rtrim($env, '/');
+    } elseif (!empty($_SERVER['HTTP_HOST'])) {
+        $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || (isset($_SERVER['SERVER_PORT']) && $_SERVER['SERVER_PORT'] == 443);
+        $scheme = $isHttps ? 'https' : 'http';
+        $base = $scheme . '://' . $_SERVER['HTTP_HOST'];
+    } else {
+        $base = 'http://vrms.local';
+    }
     return $base . '/' . ltrim($path, '/');
 }
 
@@ -289,12 +325,6 @@ function consume_auth_token(PDO $pdo, int $tokenId): void
         if ($stmt->rowCount() !== 1) {
             throw new RuntimeException('This authentication link has already been used.');
         }
-}
-
-function deliver_auth_link(string $kind, string $email, string $url): void
-    {
-        error_log("VELO {$kind} link for {$email}: {$url}");
-        $_SESSION['demo_auth_link'] = $url;
 }
 
 function vehicle_image(?string $image, string $fallback = '/assets/img/vehicle-placeholder.svg'): string

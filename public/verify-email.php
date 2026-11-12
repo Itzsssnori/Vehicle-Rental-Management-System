@@ -8,7 +8,22 @@ $token = trim((string)($_GET['token'] ?? ''));
 if ($token !== '') {
     $record = find_auth_token(db(), $token, 'email_verification');
     if (!$record) {
-        $error = 'This verification link is invalid or has expired.';
+        // Check if token was already consumed and user is already verified
+        $alreadyStmt = db()->prepare(
+            'SELECT t.id, t.used_at, u.id AS user_id, u.email, u.email_verified_at, u.name
+             FROM auth_tokens t
+             INNER JOIN users u ON u.id = t.user_id
+             WHERE t.token_hash = ? AND t.token_type = ?
+             LIMIT 1'
+        );
+        $alreadyStmt->execute([auth_token_hash($token), 'email_verification']);
+        $already = $alreadyStmt->fetch();
+
+        if ($already && !empty($already['email_verified_at'])) {
+            $message = 'Your email address is already verified. You can log in and start booking vehicles.';
+        } else {
+            $error = 'This verification link is invalid or has expired. You can request a new verification link below.';
+        }
     } else {
         $pdo = db();
         try {
@@ -27,11 +42,24 @@ if ($token !== '') {
         }
     }
 } elseif (isset($_GET['sent'])) {
-    $message = 'A verification link has been sent to your email. Please check your inbox or spam folder.';
+    $message = 'A verification link has been prepared. Please check your inbox or spam folder.';
 }
 
-$demoLink = $_SESSION['demo_auth_link'] ?? '';
-unset($_SESSION['demo_auth_link']);
+$demoLink = $_SESSION['demo_auth_link'] ?? ($_SESSION['last_auth_link'] ?? '');
+if (!empty($_SESSION['demo_auth_link'])) {
+    $_SESSION['last_auth_link'] = $_SESSION['demo_auth_link'];
+}
+
+$mailDispatch = $_SESSION['auth_mail_dispatch'] ?? ($_SESSION['last_mail_dispatch'] ?? null);
+if (!empty($_SESSION['auth_mail_dispatch'])) {
+    $_SESSION['last_mail_dispatch'] = $_SESSION['auth_mail_dispatch'];
+}
+
+// Clean up stored session links when verification successfully completes
+if ($token !== '' && $message) {
+    unset($_SESSION['demo_auth_link'], $_SESSION['last_auth_link'], $_SESSION['auth_mail_dispatch'], $_SESSION['last_mail_dispatch']);
+}
+
 include __DIR__ . '/../includes/header.php';
 ?>
 
@@ -76,22 +104,39 @@ include __DIR__ . '/../includes/header.php';
         </a>
 
       <?php elseif (isset($_GET['sent'])): ?>
-        <div class="portal-alert-info" role="status">
-          <span class="alert-icon" aria-hidden="true">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
-          </span>
-          <div>
-            <strong>Check Your Inbox</strong>
-            <p style="margin:4px 0 0;font-size:0.88rem;"><?= e($message) ?></p>
+        <?php if ($mailDispatch && $mailDispatch['success']): ?>
+          <div class="portal-alert-success" role="status">
+            <span class="alert-icon" aria-hidden="true">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+            </span>
+            <div>
+              <strong>Verification Email Dispatched!</strong>
+              <p style="margin:4px 0 0;font-size:0.88rem;">
+                A confirmation message was sent via <?= e(strtoupper($mailDispatch['mode'])) ?> to <strong><?= e($mailDispatch['email']) ?></strong>. Check your inbox and click the verification link.
+              </p>
+            </div>
           </div>
-        </div>
+        <?php else: ?>
+          <div class="portal-alert-info" role="status">
+            <span class="alert-icon" aria-hidden="true">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+            </span>
+            <div>
+              <strong>Check Your Inbox</strong>
+              <p style="margin:4px 0 0;font-size:0.88rem;"><?= e($message) ?></p>
+            </div>
+          </div>
+        <?php endif; ?>
 
         <?php if ($demoLink): ?>
-          <div class="portal-demo-banner" role="note">
+          <div class="portal-demo-banner" role="note" style="margin-top:16px;">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
             <div>
-              <strong>Demo Environment Link:</strong>
-              <a href="<?= e($demoLink) ?>">Open the generated verification link</a>
+              <strong>Instant Verification Link (Local Testing):</strong>
+              <p style="margin:3px 0 6px; font-size:0.8rem; color:#475569;">
+                <?= ($mailDispatch && $mailDispatch['success']) ? 'For development testing, you can also use this direct link:' : 'To send real emails to user inboxes, configure SMTP in your <code>.env</code> file. For now, you can activate this account immediately below:' ?>
+              </p>
+              <a href="<?= e($demoLink) ?>" style="font-weight:700; text-decoration:underline;">Click here to activate and verify this account</a>
             </div>
           </div>
         <?php endif; ?>
