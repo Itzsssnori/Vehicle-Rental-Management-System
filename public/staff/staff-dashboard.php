@@ -161,7 +161,16 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             if ($mileage === false || $mileage < 0 || $fuel === false || $fuel < 0 || $fuel > 100 || !$notes) {
                 throw new RuntimeException('Enter valid mileage, fuel level (0-100%), and condition notes.');
             }
-            $stmt = $pdo->prepare('SELECT r.*, p.starting_mileage, res.customer_id, res.id AS reservation_id, res.requested_return_at, v.daily_rate FROM rentals r INNER JOIN pickup_records p ON p.rental_id = r.id INNER JOIN reservations res ON res.id = r.reservation_id INNER JOIN vehicles v ON v.id = r.vehicle_id WHERE r.id = ? FOR UPDATE');
+            $stmt = $pdo->prepare(
+                'SELECT r.*, p.starting_mileage, p.starting_fuel_level,
+                        res.customer_id, res.id AS reservation_id, res.requested_pickup_at, res.requested_return_at, res.return_location_id,
+                        v.id AS vehicle_id, v.daily_rate, v.fuel_capacity_liters, v.daily_mileage_limit, v.excess_mileage_rate, v.next_service_mileage
+                 FROM rentals r 
+                 INNER JOIN pickup_records p ON p.rental_id = r.id 
+                 INNER JOIN reservations res ON res.id = r.reservation_id 
+                 INNER JOIN vehicles v ON v.id = r.vehicle_id 
+                 WHERE r.id = ? FOR UPDATE'
+            );
             $stmt->execute([$rentalId]);
             $rental = $stmt->fetch();
             if (!$rental || $rental['status'] !== 'ongoing') {
@@ -187,6 +196,47 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 $damage = $pdo->prepare('INSERT INTO damage_reports (rental_id, reported_by, description, estimated_cost) VALUES (?, ?, ?, ?)');
                 $damage->execute([$rentalId, $user['id'], $damageDescription, $estimatedDamage ?: null]);
             }
+
+            // 1. Automated Excess Mileage Check
+            $daysCount = rental_days($rental['requested_pickup_at'], $rental['requested_return_at']);
+            $allowedKm = $daysCount * (int)($rental['daily_mileage_limit'] ?: 200);
+            $actualKm = $mileage - (int)$rental['starting_mileage'];
+            if ($actualKm > $allowedKm) {
+                $excessKm = $actualKm - $allowedKm;
+                $ratePerKm = (float)($rental['excess_mileage_rate'] ?: 12.0);
+                $excessCharge = round($excessKm * $ratePerKm, 2);
+                $insExcess = $pdo->prepare("INSERT INTO rental_charges (rental_id, charge_type, description, quantity, unit_price, amount) VALUES (?, 'mileage', ?, ?, ?, ?)");
+                $insExcess->execute([$rentalId, "Excess mileage penalty: {$excessKm} km over allowance", $excessKm, $ratePerKm, $excessCharge]);
+            }
+
+            // 2. Automated Fuel Deficit Surcharge
+            $startingFuel = (float)($rental['starting_fuel_level'] ?? 100);
+            if ($startingFuel - $fuel > 0.5) {
+                $missingPct = $startingFuel - $fuel;
+                $capacity = (float)($rental['fuel_capacity_liters'] ?: 45.0);
+                $missingLiters = round(($missingPct / 100.0) * $capacity, 1);
+                $fuelRate = 70.00;
+                $refuelServiceFee = 150.00;
+                $totalFuelFee = round(($missingLiters * $fuelRate) + $refuelServiceFee, 2);
+                $insFuel = $pdo->prepare("INSERT INTO rental_charges (rental_id, charge_type, description, quantity, unit_price, amount) VALUES (?, 'fuel', ?, ?, ?, ?)");
+                $insFuel->execute([$rentalId, "Refueling deficit: missing {$missingLiters} L fuel (₱70/L + ₱150 service fee)", $missingLiters, $fuelRate, $totalFuelFee]);
+            }
+
+            // 3. Multi-venue Relocation: Update vehicle current hub & odometer
+            $returnLocationId = !empty($rental['return_location_id']) ? (int)$rental['return_location_id'] : 1;
+            $updateVeh = $pdo->prepare("UPDATE vehicles SET current_location_id = ?, mileage = ? WHERE id = ?");
+            $updateVeh->execute([$returnLocationId, $mileage, $rental['vehicle_id']]);
+
+            // 4. Mileage-Based Automated Preventive Maintenance Trigger
+            $maintenanceTriggered = false;
+            if ($mileage >= (int)($rental['next_service_mileage'] ?: 5000)) {
+                $pdo->prepare("UPDATE vehicles SET status = 'maintenance' WHERE id = ?")->execute([$rental['vehicle_id']]);
+                $insMaint = $pdo->prepare("INSERT INTO maintenance (vehicle_id, description, start_date, maintenance_status, created_by) VALUES (?, ?, CURDATE(), 'in_progress', ?)");
+                $insMaint->execute([$rental['vehicle_id'], "Automated Service Lock: Odometer reached {$mileage} km (service threshold was {$rental['next_service_mileage']} km)", $user['id']]);
+                $maintenanceTriggered = true;
+            }
+
+            // 5. Late Fee Calculation
             $lateFee = late_fee_amount($rental['requested_return_at'], date('Y-m-d H:i:s'), (float)$rental['daily_rate']);
             if ($lateFee['amount'] > 0) {
                 $existingLate = $pdo->prepare("SELECT id FROM rental_charges WHERE rental_id = ? AND charge_type = 'late_fee' LIMIT 1");
@@ -206,8 +256,15 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             $update->execute([$rentalId]);
             record_rental_status($pdo, $rentalId, (int)$user['id'], 'returned', 'ongoing', 'Vehicle return recorded.');
             write_audit($pdo, (int)$user['id'], 'rental_returned', 'rentals', $rentalId, 'Vehicle return recorded.');
+            entity_log_change($pdo, 'rentals', $rentalId, 'UPDATE', ['status' => 'ongoing'], [
+                'status' => 'returned',
+                'ending_mileage' => $mileage,
+                'ending_fuel_level' => $fuel,
+                'hub_returned_to' => $returnLocationId,
+            ], (int)$user['id']);
+
             notify_reservation($pdo, (int)$rental['customer_id'], 'Vehicle returned', 'Your vehicle return was recorded and is awaiting final inspection and settlement.', (int)$rental['reservation_id']);
-            $message = 'Vehicle return recorded. The rental is now awaiting final settlement.';
+            $message = 'Vehicle return recorded. Odometer, fuel, and hub location updated.' . ($maintenanceTriggered ? ' Notice: Vehicle reached routine service threshold and was automatically placed in Maintenance status.' : '');
 
         } elseif ($action === 'complete') {
             if (!$rentalId || !user_has_permission((int)$user['id'], 'rentals.return')) {
@@ -285,17 +342,35 @@ $activeTab = $_GET['tab'] ?? ($_GET['section'] ?? 'overview');
 if ($activeTab === 'requests') $activeTab = 'reservations';
 if ($activeTab === 'operations') $activeTab = 'pickups';
 
+// Venue / Hub scoping
+$staffLocationId = current_user_location_id();
+$staffLocationName = '';
+if ($staffLocationId) {
+    $locStmt = $pdo->prepare('SELECT name, city FROM locations WHERE id = ?');
+    $locStmt->execute([$staffLocationId]);
+    $locRow = $locStmt->fetch();
+    if ($locRow) {
+        $staffLocationName = $locRow['name'] . ' (' . $locRow['city'] . ')';
+    }
+}
+$isGlobalStaff = is_super_admin() || empty($staffLocationId);
+$staffLocFilterSql = $isGlobalStaff ? "" : " AND r.pickup_location_id = " . (int)$staffLocationId;
+$staffReturnLocFilterSql = $isGlobalStaff ? "" : " AND r.return_location_id = " . (int)$staffLocationId;
+
 // 1. Fetch Pending Reservations
 $pendingReservations = $pdo->query(
     "SELECT r.*,
             u.id AS customer_user_id, u.name AS customer_name, u.email AS customer_email, u.phone AS customer_phone,
             v.brand, v.model, vc.name AS category, v.plate_number, v.daily_rate, v.image AS image_url, v.status AS vehicle_status,
+            pl.name AS pickup_location_name, rl.name AS return_location_name,
             (SELECT COUNT(*) FROM penalty_events pe WHERE pe.user_id = u.id AND pe.status = 'approved' AND (pe.expires_at IS NULL OR pe.expires_at >= CURRENT_DATE)) AS active_points
      FROM reservations r
      INNER JOIN users u ON u.id = r.customer_id
      INNER JOIN vehicles v ON v.id = r.vehicle_id
      LEFT JOIN vehicle_categories vc ON vc.id = v.category_id
-     WHERE r.status = 'pending'
+     LEFT JOIN locations pl ON pl.id = r.pickup_location_id
+     LEFT JOIN locations rl ON rl.id = r.return_location_id
+     WHERE r.status = 'pending' AND r.deleted_at IS NULL {$staffLocFilterSql}
      ORDER BY r.requested_pickup_at ASC"
 )->fetchAll();
 
@@ -304,12 +379,15 @@ $readyPickups = $pdo->query(
     "SELECT r.*,
             u.id AS customer_user_id, u.name AS customer_name, u.email AS customer_email, u.phone AS customer_phone,
             v.brand, v.model, vc.name AS category, v.plate_number, v.daily_rate, v.image AS image_url, v.status AS vehicle_status, v.mileage AS current_mileage,
+            pl.name AS pickup_location_name, rl.name AS return_location_name,
             (SELECT id FROM rentals WHERE reservation_id = r.id LIMIT 1) AS rental_id
      FROM reservations r
      INNER JOIN users u ON u.id = r.customer_id
      INNER JOIN vehicles v ON v.id = r.vehicle_id
      LEFT JOIN vehicle_categories vc ON vc.id = v.category_id
-     WHERE r.status = 'confirmed' AND (SELECT id FROM rentals WHERE reservation_id = r.id LIMIT 1) IS NULL
+     LEFT JOIN locations pl ON pl.id = r.pickup_location_id
+     LEFT JOIN locations rl ON rl.id = r.return_location_id
+     WHERE r.status = 'confirmed' AND r.deleted_at IS NULL AND (SELECT id FROM rentals WHERE reservation_id = r.id LIMIT 1) IS NULL {$staffLocFilterSql}
      ORDER BY r.requested_pickup_at ASC"
 )->fetchAll();
 
@@ -329,14 +407,17 @@ $ongoingRentals = $pdo->query(
             r.reference_number, r.requested_pickup_at, r.requested_return_at, r.total_amount,
             u.name AS customer_name, u.email AS customer_email, u.phone AS customer_phone,
             v.brand, v.model, vc.name AS category, v.plate_number, v.daily_rate, v.image AS image_url,
+            pl.name AS pickup_location_name, rl.name AS return_location_name,
             p.starting_mileage, p.starting_fuel_level, p.picked_up_at
      FROM rentals rt
      INNER JOIN reservations r ON r.id = rt.reservation_id
      INNER JOIN users u ON u.id = rt.customer_id
      INNER JOIN vehicles v ON v.id = rt.vehicle_id
      LEFT JOIN vehicle_categories vc ON vc.id = v.category_id
+     LEFT JOIN locations pl ON pl.id = r.pickup_location_id
+     LEFT JOIN locations rl ON rl.id = r.return_location_id
      LEFT JOIN pickup_records p ON p.rental_id = rt.id
-     WHERE rt.status = 'ongoing'
+     WHERE rt.status = 'ongoing' " . ($isGlobalStaff ? "" : " AND (r.pickup_location_id = {$staffLocationId} OR r.return_location_id = {$staffLocationId})") . "
      ORDER BY rt.expected_return_at ASC"
 )->fetchAll();
 
@@ -347,14 +428,17 @@ $returnedRentals = $pdo->query(
             u.name AS customer_name, u.email AS customer_email,
             v.brand, v.model, v.plate_number, v.daily_rate, v.image AS image_url,
             ret.ending_mileage, ret.ending_fuel_level, ret.returned_at, ret.damage_reported,
+            pl.name AS pickup_location_name, rl.name AS return_location_name,
             p.starting_mileage
      FROM rentals rt
      INNER JOIN reservations r ON r.id = rt.reservation_id
      INNER JOIN users u ON u.id = rt.customer_id
      INNER JOIN vehicles v ON v.id = rt.vehicle_id
+     LEFT JOIN locations pl ON pl.id = r.pickup_location_id
+     LEFT JOIN locations rl ON rl.id = r.return_location_id
      LEFT JOIN pickup_records p ON p.rental_id = rt.id
      LEFT JOIN return_records ret ON ret.rental_id = rt.id
-     WHERE rt.status = 'returned'
+     WHERE rt.status = 'returned' {$staffReturnLocFilterSql}
      ORDER BY ret.returned_at DESC"
 )->fetchAll();
 
@@ -481,7 +565,7 @@ include __DIR__ . '/../../includes/header.php';
         <div class="portal-hero-text">
           <div class="portal-hero-eyebrow">
             <span class="staff-live-dot" style="display:inline-block; vertical-align:middle; margin-right:6px;" aria-hidden="true"></span>
-            Operations Workspace &bull; Front Counter
+            Operations Workspace &bull; <?= $staffLocationName ? e($staffLocationName) : 'Global Multi-Hub Desk' ?>
           </div>
           <h2>Operations Command, <?= e($user['name']) ?></h2>
           <p>Review customer reservations, coordinate vehicle turnovers, return check-ins, and front-desk settlements.</p>
@@ -504,6 +588,20 @@ include __DIR__ . '/../../includes/header.php';
             <span>Payment Desk</span>
           </a>
         </div>
+      </section>
+
+      <!-- Assigned Hub Venue Depot Banner -->
+      <section class="portal-card" style="padding:12px 18px; margin-bottom:20px; background:#ffffff; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0284c7" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+          <strong style="font-size:0.86rem; color:#0f172a;">Assigned Operations Depot:</strong>
+          <span style="font-size:0.82rem; color:#64748b;">
+            <?= $staffLocationName ? e($staffLocationName) : 'Global Multi-Hub Operations Desk (Network Wide)' ?>
+          </span>
+        </div>
+        <span class="portal-badge badge-neutral">
+          <?= $staffLocationName ? 'Stationed Branch Operations' : 'Global Network' ?>
+        </span>
       </section>
 
       <!-- 2. Flash Notifications -->

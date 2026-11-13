@@ -402,6 +402,26 @@ include __DIR__ . '/../../includes/header.php';
                 </div>
               </div>
 
+              <?php
+                $protInfo = get_protection_plan_info($reservation['protection_tier'] ?? 'basic');
+              ?>
+              <div style="margin-top:16px;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+                <div>
+                  <span style="font-size:0.72rem;font-weight:800;text-transform:uppercase;color:#64748b;display:block;">Selected Protection Tier</span>
+                  <strong style="font-size:0.9rem;color:#0f172a;"><?= e($protInfo['name']) ?></strong>
+                  <span style="font-size:0.75rem;color:#64748b;display:block;"><?= e($protInfo['desc']) ?></span>
+                </div>
+                <?php if ((float)($reservation['security_deposit_amount'] ?? 0) > 0): ?>
+                  <div style="text-align:right;">
+                    <span style="font-size:0.72rem;font-weight:800;text-transform:uppercase;color:#64748b;display:block;">Security Deposit</span>
+                    <strong style="font-size:0.9rem;color:#0f172a;">₱<?= number_format((float)$reservation['security_deposit_amount']) ?></strong>
+                    <span class="portal-badge badge-neutral" style="font-size:0.68rem;padding:2px 6px;">
+                      <?= e(ucfirst($reservation['security_deposit_status'] ?: 'Held')) ?>
+                    </span>
+                  </div>
+                <?php endif; ?>
+              </div>
+
               <?php if ($reservation['purpose']): ?>
                 <div style="margin-top:16px;padding-top:14px;border-top:1px solid #f1f5f9;">
                   <span style="font-size:0.74rem;font-weight:800;text-transform:uppercase;color:#94a3b8;display:block;margin-bottom:4px;">Stated Rental Purpose</span>
@@ -665,6 +685,97 @@ include __DIR__ . '/../../includes/header.php';
             <?php endif; ?>
           </div>
         </div>
+
+        <!-- Payment History -->
+        <section class="portal-card" aria-label="Payment history">
+          <div class="portal-card-header">
+            <div class="portal-card-title-group">
+              <h2>Payment History</h2>
+              <p>All payments recorded against this booking.</p>
+            </div>
+            <?php if ($balance['outstanding'] > 0.0001): ?>
+              <span style="background:#fef9c3; color:#854d0e; border:1px solid #fde68a; border-radius:8px; padding:5px 12px; font-size:0.80rem; font-weight:700;">
+                Outstanding: &#8369;<?= number_format($balance['outstanding'], 2) ?>
+              </span>
+            <?php else: ?>
+              <span style="background:#ecfdf5; color:#065f46; border:1px solid #a7f3d0; border-radius:8px; padding:5px 12px; font-size:0.80rem; font-weight:700;">
+                Fully Paid
+              </span>
+            <?php endif; ?>
+          </div>
+
+          <!-- Balance Summary Row -->
+          <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:12px; margin-bottom:20px;">
+            <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:14px 16px; text-align:center;">
+              <div style="font-size:0.70rem; font-weight:700; color:#94a3b8; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:4px;">Total Charged</div>
+              <div style="font-size:1.10rem; font-weight:800; color:#0f172a;">&#8369;<?= number_format($balance['charged'] > 0 ? $balance['charged'] : (float)$reservation['total_amount'], 2) ?></div>
+            </div>
+            <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:14px 16px; text-align:center;">
+              <div style="font-size:0.70rem; font-weight:700; color:#94a3b8; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:4px;">Total Paid</div>
+              <div style="font-size:1.10rem; font-weight:800; color:#059669;">&#8369;<?= number_format($balance['paid'], 2) ?></div>
+            </div>
+            <div style="background:<?= $balance['outstanding'] > 0.0001 ? '#fefce8' : '#ecfdf5' ?>; border:1px solid <?= $balance['outstanding'] > 0.0001 ? '#fde68a' : '#a7f3d0' ?>; border-radius:10px; padding:14px 16px; text-align:center;">
+              <div style="font-size:0.70rem; font-weight:700; color:#94a3b8; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:4px;">Outstanding</div>
+              <div style="font-size:1.10rem; font-weight:800; color:<?= $balance['outstanding'] > 0.0001 ? '#92400e' : '#065f46' ?>;">&#8369;<?= number_format($balance['outstanding'], 2) ?></div>
+            </div>
+          </div>
+
+          <?php if (empty($paymentsList)): ?>
+            <p style="text-align:center; color:#94a3b8; font-size:0.86rem; padding:24px 0;">No payments have been recorded for this booking yet.</p>
+          <?php else: ?>
+            <div class="portal-table-container">
+              <table class="portal-table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Method</th>
+                    <th>Amount</th>
+                    <th>Status</th>
+                    <th>Notes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <?php foreach ($paymentsList as $pmt): ?>
+                    <tr>
+                      <td style="font-size:0.82rem; color:#334155;"><?= e(date('M j, Y g:i A', strtotime($pmt['paid_at'] ?? $pmt['created_at']))) ?></td>
+                      <td>
+                        <span style="font-size:0.82rem; font-weight:600; text-transform:capitalize; color:#1e293b;">
+                          <?= e(str_replace('_', ' ', $pmt['method'] ?? 'Cash')) ?>
+                        </span>
+                      </td>
+                      <td style="font-weight:700; color:#0f172a;">&#8369;<?= number_format((float)$pmt['amount'], 2) ?></td>
+                      <td>
+                        <?php if (($pmt['status'] ?? '') === 'paid' || ($pmt['status'] ?? '') === 'completed'): ?>
+                          <span class="portal-badge badge-success">Paid</span>
+                        <?php elseif (($pmt['status'] ?? '') === 'pending'): ?>
+                          <span class="portal-badge badge-warning">Pending</span>
+                        <?php else: ?>
+                          <span class="portal-badge badge-neutral"><?= e(ucfirst($pmt['status'] ?? 'Recorded')) ?></span>
+                        <?php endif; ?>
+                      </td>
+                      <td style="font-size:0.80rem; color:#64748b;"><?= e($pmt['notes'] ?? '') ?></td>
+                    </tr>
+                  <?php endforeach; ?>
+                </tbody>
+              </table>
+            </div>
+          <?php endif; ?>
+
+          <?php
+            $additionalChargesForBreakdown = array_filter($chargesList, static fn($c) => $c['charge_type'] !== 'rental');
+          ?>
+          <?php if (!empty($additionalChargesForBreakdown)): ?>
+            <div style="margin-top:16px; padding-top:14px; border-top:1px solid #f1f5f9;">
+              <p style="font-size:0.74rem; font-weight:700; color:#94a3b8; text-transform:uppercase; letter-spacing:0.05em; margin:0 0 10px;">Charge Breakdown</p>
+              <?php foreach ($additionalChargesForBreakdown as $chg): ?>
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid #f8fafc; font-size:0.84rem;">
+                  <span style="color:#334155;"><?= e(ucfirst(str_replace('_', ' ', $chg['charge_type']))) ?><?= ($chg['description'] ?? '') ? ' — ' . e($chg['description']) : '' ?></span>
+                  <span style="font-weight:700; color:#0f172a;">&#8369;<?= number_format((float)$chg['amount'], 2) ?></span>
+                </div>
+              <?php endforeach; ?>
+            </div>
+          <?php endif; ?>
+        </section>
       <?php endif; ?>
     </div>
   </div>

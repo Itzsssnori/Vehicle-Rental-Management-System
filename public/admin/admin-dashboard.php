@@ -17,34 +17,53 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             $stmt = db()->prepare("UPDATE users u INNER JOIN user_roles ur ON ur.user_id = u.id INNER JOIN roles r ON r.id = ur.role_id SET u.account_status = 'approved' WHERE u.id = ? AND r.name = 'staff'");
             $stmt->execute([$id]);
             write_audit(db(), (int)$user['id'], 'staff_approved', 'users', $id, 'Approved staff registration from dashboard.');
-            $message = 'Faculty/staff account successfully approved.';
+            $message = 'Operations staff account successfully approved.';
         } elseif ($action === 'reject_staff' && $id) {
             $stmt = db()->prepare("UPDATE users u INNER JOIN user_roles ur ON ur.user_id = u.id INNER JOIN roles r ON r.id = ur.role_id SET u.account_status = 'rejected' WHERE u.id = ? AND r.name = 'staff'");
             $stmt->execute([$id]);
             write_audit(db(), (int)$user['id'], 'staff_rejected', 'users', $id, 'Rejected staff registration from dashboard.');
-            $message = 'Faculty/staff account registration was rejected.';
+            $message = 'Operations staff account registration was rejected.';
         }
     } catch (Throwable $e) {
         $error = 'Action could not be completed: ' . $e->getMessage();
     }
 }
 
+// Fleet & Regional Venue Scoping
+$allLocations = get_active_locations();
+if (!is_super_admin($user)) {
+    $selectedHubId = current_user_location_id($user);
+} else {
+    $selectedHubId = filter_input(INPUT_GET, 'hub', FILTER_VALIDATE_INT);
+}
+$selectedHubName = '';
+if ($selectedHubId) {
+    foreach ($allLocations as $loc) {
+        if ((int)$loc['id'] === $selectedHubId) {
+            $selectedHubName = $loc['name'] . ' (' . $loc['city'] . ')';
+            break;
+        }
+    }
+}
+$vehHubSql = $selectedHubId ? " AND current_location_id = {$selectedHubId}" : "";
+$resHubSql = $selectedHubId ? " AND pickup_location_id = {$selectedHubId}" : "";
+
 // Fleet Statistics
-$totalVehicles = (int)db()->query('SELECT COUNT(*) FROM vehicles')->fetchColumn();
-$operationalVehicles = (int)db()->query("SELECT COUNT(*) FROM vehicles WHERE status = 'operational'")->fetchColumn();
-$maintenanceVehicles = (int)db()->query("SELECT COUNT(*) FROM vehicles WHERE status = 'maintenance'")->fetchColumn();
-$retiredVehicles = (int)db()->query("SELECT COUNT(*) FROM vehicles WHERE status = 'retired'")->fetchColumn();
+$totalVehicles = (int)db()->query("SELECT COUNT(*) FROM vehicles WHERE deleted_at IS NULL {$vehHubSql}")->fetchColumn();
+$operationalVehicles = (int)db()->query("SELECT COUNT(*) FROM vehicles WHERE status = 'operational' AND deleted_at IS NULL {$vehHubSql}")->fetchColumn();
+$maintenanceVehicles = (int)db()->query("SELECT COUNT(*) FROM vehicles WHERE status = 'maintenance' AND deleted_at IS NULL {$vehHubSql}")->fetchColumn();
+$retiredVehicles = (int)db()->query("SELECT COUNT(*) FROM vehicles WHERE status = 'retired' AND deleted_at IS NULL {$vehHubSql}")->fetchColumn();
 
 // User Statistics
-$totalCustomers = (int)db()->query("SELECT COUNT(*) FROM user_roles ur INNER JOIN roles r ON r.id = ur.role_id WHERE r.name = 'customer'")->fetchColumn();
-$activeStaff = (int)db()->query("SELECT COUNT(*) FROM user_roles ur INNER JOIN roles r ON r.id = ur.role_id INNER JOIN users u ON u.id = ur.user_id WHERE r.name = 'staff' AND u.account_status = 'approved'")->fetchColumn();
-$pendingStaff = (int)db()->query("SELECT COUNT(*) FROM user_roles ur INNER JOIN roles r ON r.id = ur.role_id INNER JOIN users u ON u.id = ur.user_id WHERE r.name = 'staff' AND u.account_status = 'pending'")->fetchColumn();
+$totalCustomers = (int)db()->query("SELECT COUNT(*) FROM user_roles ur INNER JOIN roles r ON r.id = ur.role_id INNER JOIN users u ON u.id = ur.user_id WHERE r.name = 'customer' AND u.deleted_at IS NULL")->fetchColumn();
+$activeStaff = (int)db()->query("SELECT COUNT(*) FROM user_roles ur INNER JOIN roles r ON r.id = ur.role_id INNER JOIN users u ON u.id = ur.user_id WHERE r.name = 'staff' AND u.account_status = 'approved' AND u.deleted_at IS NULL")->fetchColumn();
+$pendingStaff = (int)db()->query("SELECT COUNT(*) FROM user_roles ur INNER JOIN roles r ON r.id = ur.role_id INNER JOIN users u ON u.id = ur.user_id WHERE r.name = 'staff' AND u.account_status = 'pending' AND u.deleted_at IS NULL")->fetchColumn();
 
 // Rental & Booking Statistics
-$confirmedBookings = (int)db()->query("SELECT COUNT(*) FROM reservations WHERE status = 'confirmed'")->fetchColumn();
-$ongoingRentals = (int)db()->query("SELECT COUNT(*) FROM rentals WHERE status = 'ongoing'")->fetchColumn();
+$confirmedBookings = (int)db()->query("SELECT COUNT(*) FROM reservations WHERE status = 'confirmed' AND deleted_at IS NULL {$resHubSql}")->fetchColumn();
+$ongoingRentals = (int)db()->query("SELECT COUNT(*) FROM rentals rt INNER JOIN reservations r ON r.id = rt.reservation_id WHERE rt.status = 'ongoing' {$resHubSql}")->fetchColumn();
 $activeTrips = $confirmedBookings + $ongoingRentals;
-$pendingReservations = (int)db()->query("SELECT COUNT(*) FROM reservations WHERE status = 'pending'")->fetchColumn();
+$pendingReservations = (int)db()->query("SELECT COUNT(*) FROM reservations WHERE status = 'pending' AND deleted_at IS NULL {$resHubSql}")->fetchColumn();
 
 // Oversight Queue Counters
 $pendingCancellations = (int)db()->query("SELECT COUNT(*) FROM reservation_cancellation_requests WHERE status = 'requested'")->fetchColumn();
@@ -161,6 +180,36 @@ include __DIR__ . '/../../includes/header.php';
         </div>
       </section>
 
+      <!-- Regional Hub Venue Scope Selector -->
+      <section class="portal-card" style="padding:12px 18px; margin-bottom:20px; background:#ffffff; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0284c7" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+          <strong style="font-size:0.86rem; color:#0f172a;">Regional Operations Scope:</strong>
+          <span style="font-size:0.82rem; color:#64748b;">
+            <?= $selectedHubId ? e($selectedHubName) : 'All Operations Hubs (Network View)' ?>
+          </span>
+        </div>
+
+        <?php if (is_super_admin($user)): ?>
+          <form method="get" style="display:flex; align-items:center; gap:8px;">
+            <label for="admin-hub-filter" style="font-size:0.8rem; font-weight:700; color:#334155; margin:0;">Filter Hub:</label>
+            <select id="admin-hub-filter" name="hub" onchange="this.form.submit()" style="font-size:0.84rem; padding:6px 12px; border:1px solid #cbd5e1; border-radius:8px; background:#f8fafc; font-weight:600;">
+              <option value="">All Regional Hubs (Global)</option>
+              <?php foreach ($allLocations as $loc): ?>
+                <option value="<?= (int)$loc['id'] ?>" <?= $selectedHubId === (int)$loc['id'] ? 'selected' : '' ?>>
+                  <?= e($loc['name']) ?> (<?= e($loc['city']) ?>)
+                </option>
+              <?php endforeach; ?>
+            </select>
+            <?php if ($selectedHubId): ?>
+              <a href="/admin/admin-dashboard.php" class="btn btn-secondary" style="padding:4px 10px; font-size:0.75rem; border-radius:6px; text-decoration:none;">Reset</a>
+            <?php endif; ?>
+          </form>
+        <?php else: ?>
+          <span class="portal-badge badge-neutral" style="padding:4px 12px; font-size:0.76rem;">Assigned Branch Depot</span>
+        <?php endif; ?>
+      </section>
+
       <!-- Feedback notifications -->
       <?php if ($message): ?>
         <div class="portal-card" style="border-left: 4px solid #10b981; background: #ecfdf5; padding: 14px 18px; margin-bottom: 20px;" role="status">
@@ -259,7 +308,7 @@ include __DIR__ . '/../../includes/header.php';
           <div class="spotlight-content">
             <div class="spotlight-header-row">
               <div class="spotlight-title-group">
-                <span style="font-size:0.74rem; font-weight:800; text-transform:uppercase; letter-spacing:0.05em; color:#d97706;">URGENT FACULTY / STAFF REQUEST</span>
+                <span style="font-size:0.74rem; font-weight:800; text-transform:uppercase; letter-spacing:0.05em; color:#d97706;">PENDING OPERATIONS STAFF APPLICATION</span>
                 <h3 style="margin-top:4px;">Approve Staff Workspace Access</h3>
                 <span class="spotlight-reference">Registered on <?= e(date('F j, Y · g:i A', strtotime($topStaff['created_at']))) ?></span>
               </div>
@@ -269,7 +318,7 @@ include __DIR__ . '/../../includes/header.php';
             </div>
 
             <p style="font-size:0.86rem; color:#475569; margin:0; line-height:1.5;">
-              This faculty/staff member has registered for operational access to verify reservations, manage turnovers, and handle counter check-ins. Review their credentials and grant system permissions.
+              This staff member has registered for operational access to verify reservations, manage turnovers, and handle counter check-ins. Review their credentials and grant system permissions.
             </p>
 
             <div class="spotlight-action-row" style="margin-top: 8px;">
@@ -343,7 +392,7 @@ include __DIR__ . '/../../includes/header.php';
               <div class="spotlight-title-group">
                 <span style="font-size:0.74rem; font-weight:800; text-transform:uppercase; letter-spacing:0.05em; color:#059669;">OPERATIONAL STABILITY</span>
                 <h3 style="margin-top:4px;">No Critical Administrative Bottlenecks</h3>
-                <span class="spotlight-reference">All faculty and staff requests have been processed. Fleet turnover is running on schedule.</span>
+                <span class="spotlight-reference">All staff registration requests have been processed. Fleet turnover is running on schedule.</span>
               </div>
             </div>
 
@@ -429,7 +478,7 @@ include __DIR__ . '/../../includes/header.php';
                 <span class="admin-module-arrow">&rarr;</span>
               </div>
               <h3 class="admin-module-title">User Management</h3>
-              <p class="admin-module-desc">Review customer and staff accounts, assign roles, approve faculty credentials, and control access.</p>
+              <p class="admin-module-desc">Review customer and staff accounts, assign roles, approve staff registrations, and control access.</p>
             </div>
             <div class="admin-module-footer">
               <span><?= $totalCustomers + $activeStaff ?> Accounts</span>

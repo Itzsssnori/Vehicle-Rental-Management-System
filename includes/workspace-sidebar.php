@@ -1,9 +1,26 @@
 <?php
 $workspaceUser = current_user() ?? [];
 $workspaceRole = $workspaceUser['role'] ?? '';
-$workspaceIsAdmin = $workspaceRole === 'admin';
+$workspaceIsSuperAdmin = $workspaceRole === 'super_admin';
+$workspaceIsAdmin = in_array($workspaceRole, ['admin', 'super_admin'], true);
 $workspacePage = basename($_SERVER['PHP_SELF']);
 $currentTab = $_GET['tab'] ?? ($_GET['section'] ?? '');
+
+$sidebarStmt = db()->prepare('SELECT id, name, email, profile_image, location_id FROM users WHERE id = ? LIMIT 1');
+$sidebarStmt->execute([(int)($workspaceUser['id'] ?? 0)]);
+$sidebarUserRow = $sidebarStmt->fetch();
+$sidebarName = $sidebarUserRow['name'] ?? ($workspaceUser['name'] ?? 'Staff Member');
+$sidebarEmail = $sidebarUserRow['email'] ?? ($workspaceUser['email'] ?? '');
+$sidebarImage = trim((string)($sidebarUserRow['profile_image'] ?? ''));
+
+// Resolve branch admin hub name
+$sidebarHubName = '';
+$sidebarHubId = (int)($sidebarUserRow['location_id'] ?? 0);
+if ($sidebarHubId && $workspaceIsAdmin && !$workspaceIsSuperAdmin) {
+    $hubStmt = db()->prepare('SELECT name FROM locations WHERE id = ? LIMIT 1');
+    $hubStmt->execute([$sidebarHubId]);
+    $sidebarHubName = $hubStmt->fetchColumn() ?: '';
+}
 
 $sidebarStmt = db()->prepare('SELECT id, name, email, profile_image FROM users WHERE id = ? LIMIT 1');
 $sidebarStmt->execute([(int)($workspaceUser['id'] ?? 0)]);
@@ -40,16 +57,27 @@ try {
     <strong class="sidebar-user-name" title="<?= e($sidebarName) ?>"><?= e($sidebarName) ?></strong>
     <span class="sidebar-user-email" title="<?= e($sidebarEmail) ?>"><?= e($sidebarEmail) ?></span>
 
-    <div class="role-badge-pill <?= $workspaceIsAdmin ? 'role-badge-admin' : 'role-badge-staff' ?>" style="margin-top:10px;">
-      <span class="role-pill-dot" aria-hidden="true"></span>
-      <span><?= $workspaceIsAdmin ? 'Administrator' : 'Operations Staff' ?></span>
+    <div class="role-badge-pill <?= $workspaceIsAdmin ? 'role-badge-admin' : 'role-badge-staff' ?>" style="margin-top:10px;<?= $workspaceIsSuperAdmin ? ' background:#4338ca; color:#ffffff;' : '' ?>">
+      <span class="role-pill-dot" aria-hidden="true"<?= $workspaceIsSuperAdmin ? ' style="background:#a5b4fc;"' : '' ?>></span>
+      <span><?= $workspaceIsSuperAdmin ? 'Super Administrator' : ($workspaceIsAdmin ? (!empty($workspaceUser['location_id']) ? 'Branch Administrator' : 'Administrator') : 'Operations Staff') ?></span>
     </div>
+    <?php if ($sidebarHubName !== ''): ?>
+      <div style="margin-top:6px; display:flex; align-items:center; gap:4px; font-size:0.68rem; color:#64748b; font-weight:600;">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+        <span><?= e($sidebarHubName) ?></span>
+      </div>
+    <?php elseif ($workspaceIsSuperAdmin): ?>
+      <div style="margin-top:6px; display:flex; align-items:center; gap:4px; font-size:0.68rem; color:#64748b; font-weight:600;">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
+        <span>Global / All Hubs</span>
+      </div>
+    <?php endif; ?>
   </div>
 
   <!-- Navigation Menu -->
   <nav class="portal-sidebar-nav">
     <?php if ($workspaceIsAdmin): ?>
-      <div class="nav-section-label">SYSTEM OVERSIGHT</div>
+      <div class="nav-section-label"><?= $workspaceIsSuperAdmin ? 'SYSTEM OVERSIGHT' : 'HUB OPERATIONS' ?></div>
 
       <a data-sidebar-section="overview" class="portal-nav-link <?= $workspacePage === 'admin-dashboard.php' ? 'active' : '' ?>" href="/admin/admin-dashboard.php">
         <span class="nav-link-icon" aria-hidden="true">
@@ -65,7 +93,7 @@ try {
         <span class="nav-link-text">Fleet Management</span>
       </a>
 
-      <a data-sidebar-section="rentals" class="portal-nav-link <?= $workspacePage === 'admin-rentals.php' ? 'active' : '' ?>" href="/admin/admin-rentals.php">
+      <a data-sidebar-section="rentals" class="portal-nav-link <?= in_array($workspacePage, ['admin-rentals.php', 'admin-penalties.php', 'admin-incidents.php', 'admin-disputes.php'], true) ? 'active' : '' ?>" href="/admin/admin-rentals.php">
         <span class="nav-link-icon" aria-hidden="true">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
         </span>
@@ -83,7 +111,7 @@ try {
         <span class="nav-link-icon" aria-hidden="true">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
         </span>
-        <span class="nav-link-text">User Management</span>
+        <span class="nav-link-text"><?= $workspaceIsSuperAdmin ? 'User Management' : 'Staff & Customers' ?></span>
         <?php if ($pendingStaffAccountsCount > 0): ?>
           <span class="nav-badge" title="<?= $pendingStaffAccountsCount ?> pending staff accounts"><?= $pendingStaffAccountsCount ?></span>
         <?php endif; ?>
@@ -93,7 +121,7 @@ try {
         <span class="nav-link-icon" aria-hidden="true">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
         </span>
-        <span class="nav-link-text">Reports</span>
+        <span class="nav-link-text"><?= $workspaceIsSuperAdmin ? 'Reports' : 'Hub Reports' ?></span>
       </a>
 
     <?php else: ?>
@@ -146,13 +174,13 @@ try {
       </a>
     <?php endif; ?>
 
-    <div class="nav-section-label" style="margin-top:20px;">ACCOUNT &amp; ACCESS</div>
+    <div class="nav-section-label" style="margin-top:16px;">ACCOUNT &amp; ACCESS</div>
 
-    <a data-sidebar-section="account" class="portal-nav-link <?= $workspacePage === 'workspace-account-settings.php' ? 'active' : '' ?>" href="/workspace/workspace-account-settings.php">
+    <a data-sidebar-section="account" class="portal-nav-link <?= in_array($workspacePage, ['admin-settings.php', 'workspace-account-settings.php'], true) ? 'active' : '' ?>" href="<?= $workspaceIsAdmin ? '/admin/admin-settings.php' : '/workspace/workspace-account-settings.php' ?>">
       <span class="nav-link-icon" aria-hidden="true">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       </span>
-      <span class="nav-link-text">Account Settings</span>
+      <span class="nav-link-text"><?= $workspaceIsSuperAdmin ? 'System & Settings' : 'Account Settings' ?></span>
     </a>
 
     <a href="/logout.php" class="portal-nav-link nav-link-logout">

@@ -35,6 +35,7 @@ if (!$attemptId && $reservationId) {
 $stmt = $pdo->prepare(
     "SELECT pa.*, r.reference_number, r.customer_id, r.requested_pickup_at, r.requested_return_at,
             r.base_amount, r.total_amount, r.payment_method AS chosen_method,
+            r.protection_tier, r.protection_fee, r.security_deposit_amount,
             v.brand, v.model, v.year, v.image, v.daily_rate, v.transmission, v.fuel_type, v.seats,
             vc.name AS category_name,
             pl.name AS pickup_location, pl.address AS pickup_address,
@@ -448,16 +449,31 @@ include __DIR__ . '/../includes/header.php';
               <span>Daily Rate (₱<?= number_format((float)$attempt['daily_rate'], 2) ?> × <?= $rentalDays ?> day<?= $rentalDays === 1 ? '' : 's' ?>)</span>
               <strong>₱<?= number_format($calculatedDailyTotal, 2) ?></strong>
             </div>
+
+            <?php if ((float)($attempt['protection_fee'] ?? 0) > 0): 
+              $pInfo = get_protection_plan_info($attempt['protection_tier'] ?? 'medium');
+            ?>
+              <div class="line-item">
+                <span><?= e($pInfo['name']) ?> (₱<?= number_format((float)$pInfo['daily_fee'], 2) ?>/day)</span>
+                <strong>₱<?= number_format((float)$attempt['protection_fee'], 2) ?></strong>
+              </div>
+            <?php else: ?>
+              <div class="line-item">
+                <span>Basic Third-Party Protection</span>
+                <strong class="item-included">Included</strong>
+              </div>
+            <?php endif; ?>
+
             <div class="line-item">
-              <span>Comprehensive Vehicle Insurance</span>
+              <span>Refundable Security Deposit (Held at Turnover)</span>
+              <strong style="color:#0f172a;">₱<?= number_format((float)($attempt['security_deposit_amount'] ?? 5000), 2) ?></strong>
+            </div>
+            <div class="line-item">
+              <span>24/7 Roadside Emergency Assistance</span>
               <strong class="item-included">Included</strong>
             </div>
             <div class="line-item">
-              <span>24/7 Roadside Assistance</span>
-              <strong class="item-included">Included</strong>
-            </div>
-            <div class="line-item">
-              <span>Local VAT & Government Surcharges</span>
+              <span>Local VAT &amp; Government Surcharges</span>
               <strong class="item-included">Included</strong>
             </div>
             

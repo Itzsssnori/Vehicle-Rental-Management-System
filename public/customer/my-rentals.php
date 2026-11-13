@@ -11,28 +11,28 @@ $perPage = 6;
 $page = max(1, (int)($_GET['page'] ?? 1));
 
 // Tab counts
-$countAllStmt = $pdo->prepare("SELECT COUNT(*) FROM reservations WHERE customer_id = ?");
+$countAllStmt = $pdo->prepare("SELECT COUNT(*) FROM reservations WHERE customer_id = ? AND deleted_at IS NULL");
 $countAllStmt->execute([$user['id']]);
 $allCount = (int)$countAllStmt->fetchColumn();
 
-$countActiveStmt = $pdo->prepare("SELECT COUNT(*) FROM reservations WHERE customer_id = ? AND status IN ('confirmed', 'ongoing')");
+$countActiveStmt = $pdo->prepare("SELECT COUNT(*) FROM reservations WHERE customer_id = ? AND status IN ('confirmed', 'ongoing') AND deleted_at IS NULL");
 $countActiveStmt->execute([$user['id']]);
 $activeCount = (int)$countActiveStmt->fetchColumn();
 
-$countPendingStmt = $pdo->prepare("SELECT COUNT(*) FROM reservations WHERE customer_id = ? AND status = 'pending'");
+$countPendingStmt = $pdo->prepare("SELECT COUNT(*) FROM reservations WHERE customer_id = ? AND status = 'pending' AND deleted_at IS NULL");
 $countPendingStmt->execute([$user['id']]);
 $pendingCount = (int)$countPendingStmt->fetchColumn();
 
-$countCompletedStmt = $pdo->prepare("SELECT COUNT(*) FROM reservations WHERE customer_id = ? AND status = 'completed'");
+$countCompletedStmt = $pdo->prepare("SELECT COUNT(*) FROM reservations WHERE customer_id = ? AND status = 'completed' AND deleted_at IS NULL");
 $countCompletedStmt->execute([$user['id']]);
 $completedCount = (int)$countCompletedStmt->fetchColumn();
 
-$countCancelledStmt = $pdo->prepare("SELECT COUNT(*) FROM reservations WHERE customer_id = ? AND status IN ('cancelled', 'rejected')");
+$countCancelledStmt = $pdo->prepare("SELECT COUNT(*) FROM reservations WHERE customer_id = ? AND status IN ('cancelled', 'rejected') AND deleted_at IS NULL");
 $countCancelledStmt->execute([$user['id']]);
 $cancelledCount = (int)$countCancelledStmt->fetchColumn();
 
 // Build query
-$where = ['r.customer_id = ?'];
+$where = ['r.customer_id = ?', 'r.deleted_at IS NULL'];
 $params = [$user['id']];
 
 if ($tab === 'active') {
@@ -72,6 +72,7 @@ $offset = ($page - 1) * $perPage;
 $stmt = $pdo->prepare(
     "SELECT r.id, r.reference_number, r.requested_pickup_at AS start_date, r.requested_return_at AS end_date,
             r.base_amount, r.total_amount, r.status, r.payment_method, r.created_at,
+            r.protection_tier, r.protection_fee, r.security_deposit_amount, r.security_deposit_status,
             v.id AS vehicle_id, v.brand, v.model, c.name AS category, v.image, v.seats, v.transmission,
             pl.name AS pickup_location, rl.name AS return_location,
             rt.id AS rental_id, rt.status AS rental_status,
@@ -236,9 +237,24 @@ include __DIR__ . '/../../includes/header.php';
                     <div class="itinerary-text">
                       <strong>Return: <?= e(date('M j, Y · g:i A', strtotime($rental['end_date']))) ?></strong>
                       <span><?= e($rental['return_location'] ?: 'Main Operations Hub') ?> (<?= $days ?> day<?= $days === 1 ? '' : 's' ?>)</span>
+                      <?php if ($rental['return_location'] && $rental['pickup_location'] && $rental['return_location'] !== $rental['pickup_location']): ?>
+                        <span style="display:block; font-size:0.72rem; color:#0284c7; font-weight:700;">Cross-Branch Return</span>
+                      <?php endif; ?>
                     </div>
                   </div>
                 </div>
+
+                <?php if (!empty($rental['protection_tier']) || (float)($rental['security_deposit_amount'] ?? 0) > 0): ?>
+                  <div style="display:flex; justify-content:space-between; align-items:center; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:6px 10px; margin-top:10px; font-size:0.75rem;">
+                    <?php if (!empty($rental['protection_tier'])): ?>
+                      <?php $pInfo = get_protection_plan_info($rental['protection_tier']); ?>
+                      <span style="color:#334155; font-weight:600;"><?= e($pInfo['name']) ?></span>
+                    <?php endif; ?>
+                    <?php if ((float)($rental['security_deposit_amount'] ?? 0) > 0): ?>
+                      <span style="color:#64748b;">Deposit: ₱<?= number_format((float)$rental['security_deposit_amount']) ?></span>
+                    <?php endif; ?>
+                  </div>
+                <?php endif; ?>
 
                 <div class="booking-financial-row">
                   <div>

@@ -5,6 +5,7 @@ include __DIR__ . '/../includes/header.php';
 
 $today = date('Y-m-d');
 $catFilter = trim($_GET['category'] ?? '');
+$allLocations = get_active_locations();
 
 $sql = "SELECT v.*, c.name AS category
         FROM vehicles v
@@ -97,9 +98,14 @@ $activeHero = $heroBanners[$activeHeroIndex];
           <div class="search-field full-field">
             <label for="hero-location">
               <span class="field-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 10c0 5-8 11-8 11S4 15 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></svg></span>
-              <span>Pickup & Return Location</span>
+              <span>Pickup & Return Location Hub</span>
             </label>
-            <input id="hero-location" type="text" name="location" placeholder="e.g. Zamboanga City Center">
+            <select id="hero-location" name="location" style="width:100%; border:none; outline:none; background:transparent; font-size:0.92rem; font-weight:600; color:#0f172a; cursor:pointer;">
+              <option value="">All Operational Venues & Hubs</option>
+              <?php foreach ($allLocations as $loc): ?>
+                <option value="<?= (int)$loc['id'] ?>"><?= e($loc['name']) ?> (<?= e($loc['city']) ?>)</option>
+              <?php endforeach; ?>
+            </select>
           </div>
 
           <div class="search-field">

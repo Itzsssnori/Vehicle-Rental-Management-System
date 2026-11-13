@@ -7,7 +7,7 @@ $error = '';
 
 if (current_user()) {
     header('Location: ' . match (current_user()['role'] ?? '') {
-        'admin' => '/admin/admin-dashboard.php',
+        'super_admin', 'admin' => '/admin/admin-dashboard.php',
         'staff' => '/staff/staff-dashboard.php',
         default => '/customer/dashboard.php',
     });
@@ -26,12 +26,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $error = 'Enter a valid email address and password.';
     } else {
         $stmt = db()->prepare(
-            "SELECT u.id, u.name, u.email, u.password_hash, u.email_verified_at, u.account_status, r.name AS role
+            "SELECT u.id, u.name, u.email, u.password_hash, u.email_verified_at, u.account_status, u.location_id, u.deleted_at, r.name AS role
              FROM users u
              INNER JOIN user_roles ur ON ur.user_id = u.id
              INNER JOIN roles r ON r.id = ur.role_id
              WHERE u.email = ?
-             ORDER BY CASE r.name WHEN 'admin' THEN 1 WHEN 'staff' THEN 2 ELSE 3 END
+             ORDER BY CASE r.name WHEN 'super_admin' THEN 0 WHEN 'admin' THEN 1 WHEN 'staff' THEN 2 ELSE 3 END
              LIMIT 1"
         );
         $stmt->execute([$email]);
@@ -39,6 +39,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if (!$user || !password_verify($password, $user['password_hash'])) {
             $error = 'The email or password is incorrect.';
+        } elseif (!empty($user['deleted_at'])) {
+            $error = 'This account has been deleted or archived. Please contact administration.';
         } elseif ($user['account_status'] === 'pending') {
             $error = 'Your staff registration is currently waiting for administrator approval.';
         } elseif ($user['account_status'] === 'rejected') {
@@ -54,7 +56,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             unset($user['password_hash']);
             $_SESSION['user'] = $user;
             $destination = match ($user['role']) {
-                'admin' => '/admin/admin-dashboard.php',
+                'super_admin', 'admin' => '/admin/admin-dashboard.php',
                 'staff' => '/staff/staff-dashboard.php',
                 default => $redirect,
             };
@@ -138,6 +140,42 @@ include __DIR__ . '/../includes/header.php';
           <span>Log in to Account</span>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
         </button>
+
+        <!-- Demo Presentation Accounts Quick Selector -->
+        <div style="margin-top:22px; padding:16px 18px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:14px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; gap:8px; flex-wrap:wrap;">
+            <div style="display:flex; align-items:center; gap:6px;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--coral);"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              <strong style="font-size:0.75rem; text-transform:uppercase; letter-spacing:0.06em; color:#334155;">Demo Presentation Accounts</strong>
+            </div>
+            <span style="font-size:0.72rem; color:#64748b; background:#ffffff; padding:2px 8px; border-radius:6px; border:1px solid #e2e8f0; font-family:monospace;">Password123!</span>
+          </div>
+          <div style="display:grid; grid-template-columns:repeat(2, 1fr); gap:8px;">
+            <button type="button" class="portal-btn-outline" style="font-size:0.76rem; padding:8px 10px; flex-direction:column; align-items:flex-start; text-align:left; height:auto; border-radius:10px; background:#ffffff; border-color:#cbd5e1; transition:all 0.15s ease;" onclick="fillDemo('demo.admin@velo.local')">
+              <strong style="color:#0f172a; font-size:0.78rem;">Super Admin</strong>
+              <span style="font-size:0.68rem; color:#64748b; margin-top:2px;">Global Network</span>
+            </button>
+            <button type="button" class="portal-btn-outline" style="font-size:0.76rem; padding:8px 10px; flex-direction:column; align-items:flex-start; text-align:left; height:auto; border-radius:10px; background:#ffffff; border-color:#cbd5e1; transition:all 0.15s ease;" onclick="fillDemo('demo.branchadmin@velo.local')">
+              <strong style="color:#0f172a; font-size:0.78rem;">Branch Admin</strong>
+              <span style="font-size:0.68rem; color:#64748b; margin-top:2px;">Makati Hub</span>
+            </button>
+            <button type="button" class="portal-btn-outline" style="font-size:0.76rem; padding:8px 10px; flex-direction:column; align-items:flex-start; text-align:left; height:auto; border-radius:10px; background:#ffffff; border-color:#cbd5e1; transition:all 0.15s ease;" onclick="fillDemo('demo.staff@velo.local')">
+              <strong style="color:#0f172a; font-size:0.78rem;">Operations Staff</strong>
+              <span style="font-size:0.68rem; color:#64748b; margin-top:2px;">Main Campus Depot</span>
+            </button>
+            <button type="button" class="portal-btn-outline" style="font-size:0.76rem; padding:8px 10px; flex-direction:column; align-items:flex-start; text-align:left; height:auto; border-radius:10px; background:#ffffff; border-color:#cbd5e1; transition:all 0.15s ease;" onclick="fillDemo('demo.customer@velo.local')">
+              <strong style="color:#0f172a; font-size:0.78rem;">Demo Customer</strong>
+              <span style="font-size:0.68rem; color:#64748b; margin-top:2px;">Verified Booker</span>
+            </button>
+          </div>
+        </div>
+
+        <script>
+          function fillDemo(email) {
+            document.getElementById('login-email').value = email;
+            document.getElementById('login-password').value = 'Password123!';
+          }
+        </script>
       </form>
 
       <div class="auth-divider-line"></div>

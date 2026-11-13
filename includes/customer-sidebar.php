@@ -11,6 +11,13 @@ $sidebarPage = basename($_SERVER['PHP_SELF']);
 $sidebarStanding = customer_standing(db(), (int)($sidebarUser['id'] ?? 0));
 $standingType = $sidebarStanding['standing'] ?? 'good';
 $standingPoints = (int)($sidebarStanding['points'] ?? 0);
+
+$notifCount = 0;
+try {
+    $notifStmt = db()->prepare('SELECT COUNT(*) FROM notifications WHERE user_id = ?');
+    $notifStmt->execute([(int)($sidebarUser['id'] ?? 0)]);
+    $notifCount = (int)$notifStmt->fetchColumn();
+} catch (Throwable $e) { }
 ?>
 <aside class="portal-customer-sidebar" aria-label="Customer dashboard navigation">
   <!-- Profile Header Card -->
@@ -68,6 +75,24 @@ $standingPoints = (int)($sidebarStanding['points'] ?? 0);
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
       </span>
       <span class="nav-link-text">Standing & Penalties</span>
+    </a>
+
+    <?php
+    $notifCount = 0;
+    try {
+        $nStmt = db()->prepare('SELECT COUNT(*) FROM notifications WHERE user_id = ?');
+        $nStmt->execute([(int)($sidebarUser['id'] ?? 0)]);
+        $notifCount = (int)$nStmt->fetchColumn();
+    } catch (Throwable $e) { }
+    ?>
+    <a href="/customer/notifications.php" class="portal-nav-link <?= $sidebarPage === 'notifications.php' ? 'active' : '' ?>">
+      <span class="nav-link-icon" aria-hidden="true">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+      </span>
+      <span class="nav-link-text">Notifications</span>
+      <?php if ($notifCount > 0): ?>
+        <span class="nav-badge" title="<?= $notifCount ?> notifications"><?= $notifCount ?></span>
+      <?php endif; ?>
     </a>
 
     <div class="nav-section-label" style="margin-top:16px;">FLEET DISCOVERY</div>

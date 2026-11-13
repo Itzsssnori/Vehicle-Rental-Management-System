@@ -6,55 +6,165 @@ $user = require_role('admin');
 $perPage = 8;
 $page = max(1, (int)($_GET['page'] ?? 1));
 
-// Financial Overview
-$overview = db()->query(
-    "SELECT
-        (SELECT COUNT(*) FROM reservations) AS reservations,
-        (SELECT COUNT(*) FROM rentals WHERE status IN ('ongoing','returned')) AS active_rentals,
-        (SELECT COALESCE(SUM(amount), 0) FROM rental_charges) AS charge_value"
-)->fetch();
+// Multi-venue location resolution
+$allLocations = get_active_locations(db());
+$selectedHubId = null;
+if (!is_super_admin($user)) {
+    $selectedHubId = current_user_location_id($user);
+} elseif (!empty($_GET['hub'])) {
+    $selectedHubId = (int)$_GET['hub'];
+}
 
-$paid = (float)db()->query('SELECT COALESCE(SUM(amount), 0) FROM payments')->fetchColumn();
-$refunded = (float)db()->query('SELECT COALESCE(SUM(amount), 0) FROM refunds')->fetchColumn();
-$netRevenue = $paid - $refunded;
+$selectedHubName = '';
+if ($selectedHubId) {
+    foreach ($allLocations as $loc) {
+        if ((int)$loc['id'] === $selectedHubId) {
+            $selectedHubName = $loc['name'] . ' (' . $loc['city'] . ')';
+            break;
+        }
+    }
+}
 
-$reportCounts = db()->query(
-    "SELECT
-      (SELECT COUNT(*) FROM reservations WHERE status = 'no_show') AS no_shows,
+// Hub Performance Breakdown (Network-wide overview across all hubs)
+$hubPerformance = db()->query(
+    "SELECT loc.id, loc.name, loc.city,
+            (SELECT COUNT(*) FROM vehicles WHERE current_location_id = loc.id AND deleted_at IS NULL) AS stationed_fleet,
+            (SELECT COUNT(*) FROM reservations WHERE pickup_location_id = loc.id AND deleted_at IS NULL) AS total_bookings,
+            (SELECT COUNT(*) FROM rentals rt INNER JOIN reservations r ON r.id = rt.reservation_id WHERE r.pickup_location_id = loc.id AND rt.status = 'ongoing') AS active_dispatches,
+            (SELECT COALESCE(SUM(p.amount), 0) FROM payments p INNER JOIN reservations r ON r.id = p.reservation_id WHERE r.pickup_location_id = loc.id) AS revenue_collected
+     FROM locations loc
+     WHERE loc.deleted_at IS NULL
+     ORDER BY loc.id ASC"
+)->fetchAll();
+
+// Scoped Financial & Fleet Overview
+if ($selectedHubId) {
+    $st = db()->prepare("SELECT COUNT(*) FROM reservations WHERE pickup_location_id = ? AND deleted_at IS NULL");
+    $st->execute([$selectedHubId]);
+    $resCount = (int)$st->fetchColumn();
+
+    $st = db()->prepare("SELECT COUNT(*) FROM rentals rt INNER JOIN reservations r ON r.id = rt.reservation_id WHERE rt.status IN ('ongoing','returned') AND r.pickup_location_id = ?");
+    $st->execute([$selectedHubId]);
+    $activeCount = (int)$st->fetchColumn();
+
+    $st = db()->prepare("SELECT COALESCE(SUM(rc.amount), 0) FROM rental_charges rc INNER JOIN reservations r ON r.id = rc.reservation_id WHERE r.pickup_location_id = ?");
+    $st->execute([$selectedHubId]);
+    $chargeVal = (float)$st->fetchColumn();
+
+    $overview = [
+        'reservations' => $resCount,
+        'active_rentals' => $activeCount,
+        'charge_value' => $chargeVal,
+    ];
+
+    $st = db()->prepare("SELECT COALESCE(SUM(p.amount), 0) FROM payments p INNER JOIN reservations r ON r.id = p.reservation_id WHERE r.pickup_location_id = ?");
+    $st->execute([$selectedHubId]);
+    $paid = (float)$st->fetchColumn();
+
+    $st = db()->prepare("SELECT COALESCE(SUM(rf.amount), 0) FROM refunds rf INNER JOIN payments p ON p.id = rf.payment_id INNER JOIN reservations r ON r.id = p.reservation_id WHERE r.pickup_location_id = ?");
+    $st->execute([$selectedHubId]);
+    $refunded = (float)$st->fetchColumn();
+    $netRevenue = $paid - $refunded;
+
+    $st = db()->prepare("SELECT
+      (SELECT COUNT(*) FROM reservations WHERE status = 'no_show' AND pickup_location_id = ? AND deleted_at IS NULL) AS no_shows,
       (SELECT COUNT(*) FROM penalty_events WHERE status = 'approved' AND (expires_at IS NULL OR expires_at >= CURRENT_DATE)) AS active_penalties,
-      (SELECT COUNT(*) FROM rental_incidents WHERE status IN ('open','contact_attempted','escalated')) AS open_incidents,
-      (SELECT COUNT(*) FROM rentals WHERE status = 'completed') AS completed_rentals"
-)->fetch();
+      (SELECT COUNT(*) FROM rental_incidents i INNER JOIN rentals rt ON rt.id = i.rental_id INNER JOIN reservations r ON r.id = rt.reservation_id WHERE i.status IN ('open','contact_attempted','escalated') AND r.pickup_location_id = ?) AS open_incidents,
+      (SELECT COUNT(*) FROM rentals rt INNER JOIN reservations r ON r.id = rt.reservation_id WHERE rt.status = 'completed' AND r.pickup_location_id = ?) AS completed_rentals");
+    $st->execute([$selectedHubId, $selectedHubId, $selectedHubId]);
+    $reportCounts = $st->fetch();
 
-$totalVehicles = (int)db()->query('SELECT COUNT(*) FROM vehicles')->fetchColumn();
-$totalPages = max(1, (int)ceil($totalVehicles / $perPage));
-$page = min($page, $totalPages);
-$offset = ($page - 1) * $perPage;
+    $st = db()->prepare("SELECT COUNT(*) FROM vehicles WHERE current_location_id = ? AND deleted_at IS NULL");
+    $st->execute([$selectedHubId]);
+    $totalVehicles = (int)$st->fetchColumn();
+    $totalPages = max(1, (int)ceil($totalVehicles / $perPage));
+    $page = min($page, $totalPages);
+    $offset = ($page - 1) * $perPage;
 
-$popular = db()->query(
-    "SELECT v.id, v.brand, v.model, v.image, vc.name AS category,
-            COUNT(res.id) AS rentals,
-            COALESCE(SUM(res.total_amount), 0) AS revenue
-     FROM vehicles v
-     LEFT JOIN vehicle_categories vc ON vc.id = v.category_id
-     LEFT JOIN reservations res ON res.vehicle_id = v.id
-     GROUP BY v.id, v.brand, v.model, v.image, vc.name
-     ORDER BY rentals DESC, revenue DESC
-     LIMIT {$perPage} OFFSET {$offset}"
-)->fetchAll();
+    $popularStmt = db()->prepare(
+        "SELECT v.id, v.brand, v.model, v.image, vc.name AS category,
+                loc.name AS hub_name,
+                COUNT(res.id) AS rentals,
+                COALESCE(SUM(res.total_amount), 0) AS revenue
+         FROM vehicles v
+         LEFT JOIN vehicle_categories vc ON vc.id = v.category_id
+         LEFT JOIN locations loc ON loc.id = v.current_location_id
+         LEFT JOIN reservations res ON res.vehicle_id = v.id AND res.deleted_at IS NULL
+         WHERE (v.current_location_id = ? OR v.home_location_id = ?) AND v.deleted_at IS NULL
+         GROUP BY v.id, v.brand, v.model, v.image, vc.name, loc.name
+         ORDER BY rentals DESC, revenue DESC
+         LIMIT {$perPage} OFFSET {$offset}"
+    );
+    $popularStmt->execute([$selectedHubId, $selectedHubId]);
+    $popular = $popularStmt->fetchAll();
 
-// Recent payment settlements
-$recentSettlements = db()->query(
-    "SELECT p.id, p.amount, p.method, p.paid_at, p.reference_number,
-            pr.receipt_number, res.reference_number AS reservation_reference,
-            u.name AS customer_name
-     FROM payments p
-     INNER JOIN reservations res ON res.id = p.reservation_id
-     INNER JOIN users u ON u.id = res.customer_id
-     LEFT JOIN payment_receipts pr ON pr.payment_id = p.id
-     ORDER BY p.paid_at DESC
-     LIMIT 5"
-)->fetchAll();
+    $recentStmt = db()->prepare(
+        "SELECT p.id, p.amount, p.method, p.paid_at, p.reference_number,
+                pr.receipt_number, res.reference_number AS reservation_reference,
+                u.name AS customer_name
+         FROM payments p
+         INNER JOIN reservations res ON res.id = p.reservation_id
+         INNER JOIN users u ON u.id = res.customer_id
+         LEFT JOIN payment_receipts pr ON pr.payment_id = p.id
+         WHERE res.pickup_location_id = ?
+         ORDER BY p.paid_at DESC
+         LIMIT 5"
+    );
+    $recentStmt->execute([$selectedHubId]);
+    $recentSettlements = $recentStmt->fetchAll();
+} else {
+    // Network-wide queries
+    $overview = db()->query(
+        "SELECT
+            (SELECT COUNT(*) FROM reservations WHERE deleted_at IS NULL) AS reservations,
+            (SELECT COUNT(*) FROM rentals WHERE status IN ('ongoing','returned')) AS active_rentals,
+            (SELECT COALESCE(SUM(amount), 0) FROM rental_charges) AS charge_value"
+    )->fetch();
+
+    $paid = (float)db()->query('SELECT COALESCE(SUM(amount), 0) FROM payments')->fetchColumn();
+    $refunded = (float)db()->query('SELECT COALESCE(SUM(amount), 0) FROM refunds')->fetchColumn();
+    $netRevenue = $paid - $refunded;
+
+    $reportCounts = db()->query(
+        "SELECT
+          (SELECT COUNT(*) FROM reservations WHERE status = 'no_show' AND deleted_at IS NULL) AS no_shows,
+          (SELECT COUNT(*) FROM penalty_events WHERE status = 'approved' AND (expires_at IS NULL OR expires_at >= CURRENT_DATE)) AS active_penalties,
+          (SELECT COUNT(*) FROM rental_incidents WHERE status IN ('open','contact_attempted','escalated')) AS open_incidents,
+          (SELECT COUNT(*) FROM rentals WHERE status = 'completed') AS completed_rentals"
+    )->fetch();
+
+    $totalVehicles = (int)db()->query('SELECT COUNT(*) FROM vehicles WHERE deleted_at IS NULL')->fetchColumn();
+    $totalPages = max(1, (int)ceil($totalVehicles / $perPage));
+    $page = min($page, $totalPages);
+    $offset = ($page - 1) * $perPage;
+
+    $popular = db()->query(
+        "SELECT v.id, v.brand, v.model, v.image, vc.name AS category,
+                loc.name AS hub_name,
+                COUNT(res.id) AS rentals,
+                COALESCE(SUM(res.total_amount), 0) AS revenue
+         FROM vehicles v
+         LEFT JOIN vehicle_categories vc ON vc.id = v.category_id
+         LEFT JOIN locations loc ON loc.id = v.current_location_id
+         LEFT JOIN reservations res ON res.vehicle_id = v.id AND res.deleted_at IS NULL
+         WHERE v.deleted_at IS NULL
+         GROUP BY v.id, v.brand, v.model, v.image, vc.name, loc.name
+         ORDER BY rentals DESC, revenue DESC
+         LIMIT {$perPage} OFFSET {$offset}"
+    )->fetchAll();
+
+    $recentSettlements = db()->query(
+        "SELECT p.id, p.amount, p.method, p.paid_at, p.reference_number,
+                pr.receipt_number, res.reference_number AS reservation_reference,
+                u.name AS customer_name
+         FROM payments p
+         INNER JOIN reservations res ON res.id = p.reservation_id
+         INNER JOIN users u ON u.id = res.customer_id
+         LEFT JOIN payment_receipts pr ON pr.payment_id = p.id
+         ORDER BY p.paid_at DESC
+         LIMIT 5"
+    )->fetchAll();
+}
 
 include __DIR__ . '/../../includes/header.php';
 ?>
@@ -94,6 +204,36 @@ include __DIR__ . '/../../includes/header.php';
             <span>Executive Dashboard</span>
           </a>
         </div>
+      </section>
+
+      <!-- Regional Hub Venue Scope Selector -->
+      <section class="portal-card" style="padding:12px 18px; margin-bottom:20px; background:#ffffff; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0284c7" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+          <strong style="font-size:0.86rem; color:#0f172a;">Regional Operations Scope:</strong>
+          <span style="font-size:0.82rem; color:#64748b;">
+            <?= $selectedHubId ? e($selectedHubName) : 'All Operations Hubs (Network View)' ?>
+          </span>
+        </div>
+
+        <?php if (is_super_admin($user)): ?>
+          <form method="get" style="display:flex; align-items:center; gap:8px;">
+            <label for="admin-reports-hub" style="font-size:0.8rem; font-weight:700; color:#334155; margin:0;">Filter Hub:</label>
+            <select id="admin-reports-hub" name="hub" onchange="this.form.submit()" style="font-size:0.84rem; padding:6px 12px; border:1px solid #cbd5e1; border-radius:8px; background:#f8fafc; font-weight:600;">
+              <option value="">All Regional Hubs (Global)</option>
+              <?php foreach ($allLocations as $loc): ?>
+                <option value="<?= (int)$loc['id'] ?>" <?= $selectedHubId === (int)$loc['id'] ? 'selected' : '' ?>>
+                  <?= e($loc['name']) ?> (<?= e($loc['city']) ?>)
+                </option>
+              <?php endforeach; ?>
+            </select>
+            <?php if ($selectedHubId): ?>
+              <a href="/admin/admin-reports.php" class="btn btn-secondary" style="padding:4px 10px; font-size:0.75rem; border-radius:6px; text-decoration:none;">Reset</a>
+            <?php endif; ?>
+          </form>
+        <?php else: ?>
+          <span class="portal-badge badge-neutral">Assigned Branch Admin</span>
+        <?php endif; ?>
       </section>
 
       <!-- 4 Financial KPI Cards -->
@@ -183,6 +323,61 @@ include __DIR__ . '/../../includes/header.php';
         </div>
       </section>
 
+      <!-- Multi-Venue Hub Performance Overview -->
+      <section class="portal-card" style="margin-top:24px;" aria-label="Venue network summary">
+        <div class="portal-card-header">
+          <div class="portal-card-title-group">
+            <h2>Regional Hub Venue Network Overview</h2>
+            <p>Fleet asset distribution, trip volume, active dispatches, and revenue yield per operational depot.</p>
+          </div>
+          <span class="portal-badge badge-brand"><?= count($hubPerformance) ?> Operational Hubs</span>
+        </div>
+
+        <div class="portal-table-container">
+          <table class="portal-table">
+            <thead>
+              <tr>
+                <th>Venue Hub Depot</th>
+                <th>City / Territory</th>
+                <th>Stationed Fleet</th>
+                <th>Cumulative Bookings</th>
+                <th>Active Dispatches</th>
+                <th>Gross Collections</th>
+              </tr>
+            </thead>
+            <tbody>
+              <?php foreach ($hubPerformance as $hub): ?>
+                <tr style="<?= $selectedHubId === (int)$hub['id'] ? 'background:#f0fdf4;' : '' ?>">
+                  <td>
+                    <strong style="font-size:0.88rem; color:#0f172a;"><?= e($hub['name']) ?></strong>
+                    <span style="font-size:0.72rem; color:#64748b; display:block;">Hub ID #<?= (int)$hub['id'] ?></span>
+                  </td>
+                  <td>
+                    <span class="portal-badge badge-neutral"><?= e($hub['city']) ?></span>
+                  </td>
+                  <td>
+                    <strong style="font-size:0.9rem; color:#0f172a;"><?= (int)$hub['stationed_fleet'] ?></strong>
+                    <span style="font-size:0.74rem; color:#64748b;"> vehicles</span>
+                  </td>
+                  <td>
+                    <strong style="font-size:0.9rem; color:#0f172a;"><?= (int)$hub['total_bookings'] ?></strong>
+                    <span style="font-size:0.74rem; color:#64748b;"> trips</span>
+                  </td>
+                  <td>
+                    <span class="portal-badge <?= (int)$hub['active_dispatches'] > 0 ? 'badge-warning' : 'badge-neutral' ?>">
+                      <?= (int)$hub['active_dispatches'] ?> ongoing
+                    </span>
+                  </td>
+                  <td>
+                    <strong style="font-size:0.92rem; color:#065f46;">₱<?= number_format((float)$hub['revenue_collected'], 2) ?></strong>
+                  </td>
+                </tr>
+              <?php endforeach; ?>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
       <!-- Fleet Performance & Yield Table -->
       <section class="portal-card" style="margin-top:24px;" aria-label="Vehicle performance">
         <div class="portal-card-header">
@@ -198,6 +393,7 @@ include __DIR__ . '/../../includes/header.php';
               <tr>
                 <th>Vehicle Asset</th>
                 <th>Category</th>
+                <th>Stationed Hub</th>
                 <th>Total Bookings</th>
                 <th>Gross Yield</th>
                 <th>Performance Status</th>
@@ -206,7 +402,7 @@ include __DIR__ . '/../../includes/header.php';
             <tbody>
               <?php if (empty($popular)): ?>
                 <tr>
-                  <td colspan="5" style="text-align:center; padding: 36px 16px; color:#64748b;">
+                  <td colspan="6" style="text-align:center; padding: 36px 16px; color:#64748b;">
                     No vehicle booking history recorded yet.
                   </td>
                 </tr>
@@ -225,6 +421,10 @@ include __DIR__ . '/../../includes/header.php';
 
                     <td>
                       <span class="portal-badge badge-neutral"><?= e($v['category']) ?></span>
+                    </td>
+
+                    <td>
+                      <span class="portal-badge badge-neutral"><?= e($v['hub_name'] ?: 'Unassigned') ?></span>
                     </td>
 
                     <td>

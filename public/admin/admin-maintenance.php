@@ -2,6 +2,10 @@
 $title = 'Maintenance Management';
 require_once __DIR__ . '/../../config.php';
 $user = require_role('admin');
+$isSuperAdmin = is_super_admin($user);
+$branchHubId = !$isSuperAdmin ? current_user_location_id($user) : null;
+$isSuperAdmin = is_super_admin($user);
+$branchHubId = !$isSuperAdmin ? current_user_location_id($user) : null;
 
 $perPage = 8;
 $page = max(1, (int)($_GET['page'] ?? 1));
@@ -75,22 +79,28 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
 }
 
 // Counts for filter pills
-$countActive = (int)db()->query("SELECT COUNT(*) FROM maintenance WHERE maintenance_status IN ('scheduled', 'in_progress')")->fetchColumn();
-$countCompleted = (int)db()->query("SELECT COUNT(*) FROM maintenance WHERE maintenance_status = 'completed'")->fetchColumn();
-$countAll = (int)db()->query("SELECT COUNT(*) FROM maintenance")->fetchColumn();
+$hubJoin = $branchHubId ? " INNER JOIN vehicles v ON v.id = m.vehicle_id AND v.current_location_id = {$branchHubId}" : '';
+$countActive = (int)db()->query("SELECT COUNT(*) FROM maintenance m{$hubJoin} WHERE m.maintenance_status IN ('scheduled', 'in_progress')")->fetchColumn();
+$countCompleted = (int)db()->query("SELECT COUNT(*) FROM maintenance m{$hubJoin} WHERE m.maintenance_status = 'completed'")->fetchColumn();
+$countAll = (int)db()->query("SELECT COUNT(*) FROM maintenance m{$hubJoin}")->fetchColumn();
 
 // Vehicles dropdown list
-$vehicles = db()->query("SELECT id, brand, model, plate_number FROM vehicles WHERE status <> 'retired' ORDER BY brand, model")->fetchAll();
+$vehWhere = $branchHubId ? " AND current_location_id = {$branchHubId}" : '';
+$vehicles = db()->query("SELECT id, brand, model, plate_number FROM vehicles WHERE status <> 'retired'{$vehWhere} ORDER BY brand, model")->fetchAll();
 
 // Build filter query
-$whereClause = '';
+$whereConditions = [];
 if ($statusFilter === 'active') {
-    $whereClause = "WHERE m.maintenance_status IN ('scheduled', 'in_progress')";
+    $whereConditions[] = "m.maintenance_status IN ('scheduled', 'in_progress')";
 } elseif ($statusFilter === 'completed') {
-    $whereClause = "WHERE m.maintenance_status = 'completed'";
+    $whereConditions[] = "m.maintenance_status = 'completed'";
 }
+if ($branchHubId) {
+    $whereConditions[] = "v.current_location_id = {$branchHubId}";
+}
+$whereClause = !empty($whereConditions) ? 'WHERE ' . implode(' AND ', $whereConditions) : '';
 
-$countSql = "SELECT COUNT(*) FROM maintenance m {$whereClause}";
+$countSql = "SELECT COUNT(*) FROM maintenance m INNER JOIN vehicles v ON v.id = m.vehicle_id {$whereClause}";
 $totalRecords = (int)db()->query($countSql)->fetchColumn();
 
 $totalPages = max(1, (int)ceil($totalRecords / $perPage));

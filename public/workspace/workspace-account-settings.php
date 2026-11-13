@@ -2,7 +2,7 @@
 $title = 'Workspace Account Settings';
 require_once __DIR__ . '/../../config.php';
 $user = current_user();
-if (!$user || !in_array($user['role'] ?? '', ['staff', 'admin'], true)) {
+if (!$user || !in_array($user['role'] ?? '', ['staff', 'admin', 'super_admin'], true)) {
     header('Location: /login.php');
     exit;
 }
@@ -13,7 +13,7 @@ $passwordMessage = '';
 $passwordError = '';
 
 $accountStmt = db()->prepare(
-    "SELECT u.id, u.name, u.email, u.account_status, u.created_at, r.name AS role, u.password_hash
+    "SELECT u.id, u.name, u.email, u.phone, u.account_status, u.created_at, r.name AS role, u.password_hash
      FROM users u
      LEFT JOIN user_roles ur ON ur.user_id = u.id
      LEFT JOIN roles r ON r.id = ur.role_id
@@ -30,6 +30,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     if ($action === 'update_profile') {
         $name = trim($_POST['name'] ?? '');
         $email = trim($_POST['email'] ?? '');
+        $phone = trim($_POST['phone'] ?? '');
 
         if ($name === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
             $profileError = 'Please enter a valid full name and email address.';
@@ -39,12 +40,13 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             if ($duplicate->fetch()) {
                 $profileError = 'That email address is already in use by another account.';
             } else {
-                $update = db()->prepare('UPDATE users SET name = ?, email = ? WHERE id = ?');
-                $update->execute([$name, $email, (int)$user['id']]);
+                $update = db()->prepare('UPDATE users SET name = ?, email = ?, phone = ? WHERE id = ?');
+                $update->execute([$name, $email, $phone ?: null, (int)$user['id']]);
                 $_SESSION['user']['name'] = $name;
                 $_SESSION['user']['email'] = $email;
                 $account['name'] = $name;
                 $account['email'] = $email;
+                $account['phone'] = $phone;
                 write_audit(db(), (int)$user['id'], 'profile_updated', 'users', (int)$user['id'], 'Updated workspace profile details');
                 $profileMessage = 'Profile identity details have been successfully updated.';
             }
@@ -98,7 +100,7 @@ include __DIR__ . '/../../includes/header.php';
           </p>
         </div>
         <div class="portal-hero-actions">
-          <a href="<?= $user['role'] === 'admin' ? '/admin/admin-dashboard.php' : '/staff/staff-dashboard.php' ?>" class="btn btn-outline-white">
+          <a href="<?= in_array($user['role'], ['admin', 'super_admin'], true) ? '/admin/admin-dashboard.php' : '/staff/staff-dashboard.php' ?>" class="btn btn-outline-white">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>
             <span>Back to Dashboard</span>
           </a>
@@ -113,7 +115,7 @@ include __DIR__ . '/../../includes/header.php';
           <div class="portal-card-header">
             <div class="portal-card-title-group">
               <span style="font-size:0.72rem; font-weight:800; text-transform:uppercase; color:#e53e3e; letter-spacing:0.05em;">IDENTITY DETAILS</span>
-              <h2><?= $user['role'] === 'admin' ? 'Administrator Profile' : 'Operations Staff Profile' ?></h2>
+              <h2><?= in_array($user['role'], ['admin', 'super_admin'], true) ? ($user['role'] === 'super_admin' ? 'Super Administrator Profile' : 'Administrator Profile') : 'Operations Staff Profile' ?></h2>
             </div>
             <span class="portal-badge badge-success"><?= e(ucfirst($account['account_status'])) ?></span>
           </div>
@@ -144,10 +146,15 @@ include __DIR__ . '/../../includes/header.php';
               <input type="email" id="email" name="email" value="<?= e($account['email']) ?>" required>
             </div>
 
+            <div>
+              <label for="phone">Phone Number</label>
+              <input type="text" id="phone" name="phone" value="<?= e($account['phone'] ?? '') ?>" placeholder="+63 9XX XXX XXXX" autocomplete="tel">
+            </div>
+
             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
               <div>
                 <label>Assigned Role</label>
-                <input value="<?= e($user['role'] === 'admin' ? 'System Administrator' : 'Operations Staff') ?>" disabled>
+                <input value="<?= e($user['role'] === 'super_admin' ? 'Super Administrator' : ($user['role'] === 'admin' ? 'Branch Administrator' : 'Operations Staff')) ?>" disabled>
               </div>
               <div>
                 <label>Account Status</label>

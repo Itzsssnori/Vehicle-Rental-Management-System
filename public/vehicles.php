@@ -8,14 +8,20 @@ $customerView = $user && $user['role'] === 'customer';
 $search = trim($_GET['search'] ?? $_GET['q'] ?? '');
 $cat   = $_GET['category'] ?? '';
 $trans = $_GET['transmission'] ?? '';
+$locFilter = filter_input(INPUT_GET, 'location', FILTER_VALIDATE_INT);
 $max   = is_numeric($_GET['max_price'] ?? '') ? (float)$_GET['max_price'] : null;
 $start = $_GET['start'] ?? '';
 $end   = $_GET['end'] ?? '';
 $page = max(1, (int)($_GET['page'] ?? 1));
 $perPage = 6;
 $validDates = preg_match('/^\d{4}-\d{2}-\d{2}$/', $start) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $end) && $end >= $start;
+$allLocations = get_active_locations();
 
-$sql = "SELECT v.*, c.name AS category FROM vehicles v INNER JOIN vehicle_categories c ON c.id = v.category_id WHERE v.status = 'operational'";
+$sql = "SELECT v.*, c.name AS category, l.name AS current_location_name, l.city AS current_location_city
+        FROM vehicles v 
+        INNER JOIN vehicle_categories c ON c.id = v.category_id 
+        LEFT JOIN locations l ON l.id = v.current_location_id
+        WHERE v.status = 'operational' AND v.deleted_at IS NULL";
 $params = [];
 
 if ($search !== '') {
@@ -27,6 +33,10 @@ if ($search !== '') {
 if (in_array($cat, ['Sedan', 'SUV', 'Premium'], true)) {
   $sql .= ' AND c.name = ?';
   $params[] = $cat;
+}
+if ($locFilter) {
+  $sql .= ' AND v.current_location_id = ?';
+  $params[] = $locFilter;
 }
 if (in_array($trans, ['Automatic', 'Manual'], true)) {
   $sql .= ' AND v.transmission = ?';
@@ -41,8 +51,9 @@ if ($validDates) {
       SELECT 1 FROM reservations r
       WHERE r.vehicle_id = v.id
         AND r.status IN ('pending', 'confirmed')
-        AND r.requested_pickup_at < CONCAT(?, ' 23:59:59')
-        AND r.requested_return_at > CONCAT(?, ' 00:00:00')
+        AND r.deleted_at IS NULL
+        AND r.requested_pickup_at < DATE_ADD(CONCAT(?, ' 23:59:59'), INTERVAL 2 HOUR)
+        AND DATE_ADD(r.requested_return_at, INTERVAL 2 HOUR) > CONCAT(?, ' 00:00:00')
   )
   AND NOT EXISTS (
       SELECT 1 FROM maintenance m
@@ -55,7 +66,7 @@ if ($validDates) {
   $params[] = $end;
   $params[] = $start;
 }
-$countSql = preg_replace('/^SELECT v\.\* /', 'SELECT COUNT(*) ', $sql);
+$countSql = preg_replace('/^SELECT v\.\*, .*? FROM /', 'SELECT COUNT(*) FROM ', $sql);
 $countStmt = db()->prepare($countSql);
 $countStmt->execute($params);
 $totalVehicles = (int)$countStmt->fetchColumn();
@@ -134,9 +145,21 @@ $vehicles = $stmt->fetchAll();
       <input type="number" name="max_price" min="0" step="100" placeholder="e.g. 3500" value="<?= e($_GET['max_price'] ?? '') ?>">
     </div>
 
+    <div class="filter-field">
+      <label>Pickup Venue / Hub</label>
+      <select name="location">
+        <option value="">All Venues &amp; Hubs</option>
+        <?php foreach ($allLocations as $loc): ?>
+          <option value="<?= (int)$loc['id'] ?>" <?= $locFilter === (int)$loc['id'] ? 'selected' : '' ?>>
+            <?= e($loc['name']) ?> (<?= e($loc['city']) ?>)
+          </option>
+        <?php endforeach; ?>
+      </select>
+    </div>
+
     <div class="filter-actions">
       <button class="btn btn-navy" type="submit">Filter Fleet</button>
-      <?php if ($search !== '' || $cat !== '' || $trans !== '' || $max !== null): ?>
+      <?php if ($search !== '' || $cat !== '' || $trans !== '' || $max !== null || $locFilter): ?>
         <a class="btn-clear-filter" href="/vehicles.php">Reset</a>
       <?php endif; ?>
     </div>
@@ -198,6 +221,11 @@ $vehicles = $stmt->fetchAll();
                 <strong>₱<?= number_format((float)$vehicle['daily_rate']) ?></strong>
                 <span class="price-cycle">/Day</span>
               </div>
+            </div>
+
+            <div style="display:inline-flex; align-items:center; gap:5px; font-size:0.74rem; font-weight:600; color:#334155; background:#f8fafc; padding:3px 9px; border-radius:999px; margin:4px 0 8px 0; border:1px solid #e2e8f0;">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--coral);"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+              <span><?= e(trim(explode('(', $vehicle['current_location_name'] ?? 'Main Campus Hub')[0])) ?> &bull; <?= e($vehicle['current_location_city'] ?? 'Metro Manila') ?></span>
             </div>
 
             <p class="card-snippet-desc">

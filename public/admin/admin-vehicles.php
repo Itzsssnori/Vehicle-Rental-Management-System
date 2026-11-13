@@ -21,6 +21,20 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     $action = $_POST['action'] ?? '';
     try {
         $pdo = db();
+        $postIsSuperAdmin = is_super_admin($user);
+        $postBranchHubId = !$postIsSuperAdmin ? current_user_location_id($user) : null;
+
+        // Helper: verify vehicle belongs to this branch admin's hub
+        $verifyHubOwnership = function(int $vehicleId) use ($pdo, $postBranchHubId, $postIsSuperAdmin): void {
+            if ($postIsSuperAdmin || !$postBranchHubId) return;
+            $check = $pdo->prepare('SELECT current_location_id FROM vehicles WHERE id = ?');
+            $check->execute([$vehicleId]);
+            $vehHub = (int)$check->fetchColumn();
+            if ($vehHub !== $postBranchHubId) {
+                throw new RuntimeException('You can only manage vehicles stationed at your assigned hub.');
+            }
+        };
+
         if ($action === 'save') {
             $id = filter_var($_POST['id'] ?? null, FILTER_VALIDATE_INT) ?: 0;
             $brand = trim($_POST['brand'] ?? '');
@@ -31,6 +45,17 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             $rate = filter_var($_POST['daily_rate'] ?? null, FILTER_VALIDATE_FLOAT);
             $status = $_POST['status'] ?? 'operational';
             $image = trim($_POST['image'] ?? '');
+            $homeLocation = filter_var($_POST['home_location_id'] ?? 1, FILTER_VALIDATE_INT) ?: 1;
+            $currentLocation = filter_var($_POST['current_location_id'] ?? $homeLocation, FILTER_VALIDATE_INT) ?: $homeLocation;
+            // Branch admins: force their hub as location
+            if ($postBranchHubId) {
+                $homeLocation = $postBranchHubId;
+                $currentLocation = $postBranchHubId;
+            }
+            $fuelCapacity = filter_var($_POST['fuel_capacity_liters'] ?? 45.0, FILTER_VALIDATE_FLOAT) ?: 45.0;
+            $mileageLimit = filter_var($_POST['daily_mileage_limit'] ?? 200, FILTER_VALIDATE_INT) ?: 200;
+            $excessRate = filter_var($_POST['excess_mileage_rate'] ?? 12.0, FILTER_VALIDATE_FLOAT) ?: 12.0;
+            $nextServiceMileage = filter_var($_POST['next_service_mileage'] ?? 5000, FILTER_VALIDATE_INT) ?: 5000;
 
             if ($brand === '' || $model === '' || !in_array($category, ['Sedan', 'SUV', 'Premium'], true)
                 || !in_array($transmission, ['Automatic', 'Manual'], true)
@@ -47,27 +72,65 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             }
 
             if ($id > 0) {
+                $verifyHubOwnership($id);
                 $stmt = $pdo->prepare(
-                    'UPDATE vehicles SET brand = ?, model = ?, category_id = ?, transmission = ?, seats = ?, daily_rate = ?, status = ?, image = ? WHERE id = ?'
+                    'UPDATE vehicles 
+                     SET brand = ?, model = ?, category_id = ?, transmission = ?, seats = ?, daily_rate = ?, status = ?, image = ?,
+                         home_location_id = ?, current_location_id = ?, fuel_capacity_liters = ?, daily_mileage_limit = ?, excess_mileage_rate = ?, next_service_mileage = ?
+                     WHERE id = ?'
                 );
-                $stmt->execute([$brand, $model, $categoryId, $transmission, $seats, $rate, $status, $image ?: null, $id]);
+                $stmt->execute([
+                    $brand, $model, $categoryId, $transmission, $seats, $rate, $status, $image ?: null,
+                    $homeLocation, $currentLocation, $fuelCapacity, $mileageLimit, $excessRate, $nextServiceMileage, $id
+                ]);
                 write_audit($pdo, (int)$user['id'], 'vehicle_updated', 'vehicles', $id, $brand . ' ' . $model);
-                $message = 'Vehicle specifications updated successfully.';
+                entity_log_change($pdo, 'vehicles', $id, 'UPDATE', null, [
+                    'brand' => $brand, 'model' => $model, 'daily_rate' => $rate,
+                    'current_hub' => $currentLocation, 'home_hub' => $homeLocation
+                ], (int)$user['id']);
+                $message = 'Vehicle specifications and venue hub assignments updated successfully.';
             } else {
                 $plateNumber = 'VELO-' . strtoupper(bin2hex(random_bytes(3)));
                 $stmt = $pdo->prepare(
-                    'INSERT INTO vehicles (category_id, brand, model, transmission, seats, daily_rate, status, image, plate_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                    'INSERT INTO vehicles 
+                     (category_id, brand, model, transmission, seats, daily_rate, status, image, plate_number, home_location_id, current_location_id, fuel_capacity_liters, daily_mileage_limit, excess_mileage_rate, next_service_mileage) 
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
                 );
-                $stmt->execute([$categoryId, $brand, $model, $transmission, $seats, $rate, $status, $image ?: null, $plateNumber]);
+                $stmt->execute([
+                    $categoryId, $brand, $model, $transmission, $seats, $rate, $status, $image ?: null, $plateNumber,
+                    $homeLocation, $currentLocation, $fuelCapacity, $mileageLimit, $excessRate, $nextServiceMileage
+                ]);
                 $newId = (int)$pdo->lastInsertId();
                 write_audit($pdo, (int)$user['id'], 'vehicle_created', 'vehicles', $newId, $brand . ' ' . $model);
-                $message = 'New vehicle added to the fleet catalog.';
+                entity_log_change($pdo, 'vehicles', $newId, 'INSERT', null, [
+                    'brand' => $brand, 'model' => $model, 'plate' => $plateNumber, 'hub' => $currentLocation
+                ], (int)$user['id']);
+                $message = 'New vehicle added to the fleet catalog and assigned to venue hub.';
             }
+        } elseif ($action === 'soft_delete') {
+            $id = filter_var($_POST['id'] ?? null, FILTER_VALIDATE_INT);
+            if (!$id) {
+                throw new RuntimeException('Invalid vehicle ID.');
+            }
+            $verifyHubOwnership($id);
+            soft_delete_entity($pdo, 'vehicles', $id, (int)$user['id']);
+            write_audit($pdo, (int)$user['id'], 'vehicle_soft_deleted', 'vehicles', $id);
+            $message = 'Vehicle safely archived (soft-deleted). Historical rental records are preserved.';
+        } elseif ($action === 'restore_soft_delete') {
+            $id = filter_var($_POST['id'] ?? null, FILTER_VALIDATE_INT);
+            if (!$id) {
+                throw new RuntimeException('Invalid vehicle ID.');
+            }
+            $verifyHubOwnership($id);
+            restore_entity($pdo, 'vehicles', $id, (int)$user['id']);
+            write_audit($pdo, (int)$user['id'], 'vehicle_restored_from_archive', 'vehicles', $id);
+            $message = 'Vehicle successfully restored to active fleet.';
         } elseif ($action === 'retire') {
             $id = filter_var($_POST['id'] ?? null, FILTER_VALIDATE_INT);
             if (!$id) {
                 throw new RuntimeException('Invalid vehicle ID.');
             }
+            $verifyHubOwnership($id);
             $stmt = $pdo->prepare("UPDATE vehicles SET status = 'retired' WHERE id = ?");
             $stmt->execute([$id]);
             write_audit($pdo, (int)$user['id'], 'vehicle_retired', 'vehicles', $id);
@@ -77,6 +140,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             if (!$id) {
                 throw new RuntimeException('Invalid vehicle ID.');
             }
+            $verifyHubOwnership($id);
             $stmt = $pdo->prepare("UPDATE vehicles SET status = 'operational' WHERE id = ?");
             $stmt->execute([$id]);
             write_audit($pdo, (int)$user['id'], 'vehicle_restored', 'vehicles', $id);
@@ -98,19 +162,41 @@ if ($editId) {
     $editing = $stmt->fetch() ?: null;
 }
 
-// Counts for filter pills
-$totalVehicles = (int)db()->query('SELECT COUNT(*) FROM vehicles')->fetchColumn();
-$operationalCount = (int)db()->query("SELECT COUNT(*) FROM vehicles WHERE status = 'operational'")->fetchColumn();
-$maintenanceCount = (int)db()->query("SELECT COUNT(*) FROM vehicles WHERE status = 'maintenance'")->fetchColumn();
-$retiredCount = (int)db()->query("SELECT COUNT(*) FROM vehicles WHERE status = 'retired'")->fetchColumn();
+$allLocations = get_active_locations();
+$isSuperAdmin = is_super_admin($user);
+$branchHubId = !$isSuperAdmin ? current_user_location_id($user) : null;
+$locFilter = filter_input(INPUT_GET, 'location', FILTER_VALIDATE_INT);
+// Branch admins are always scoped to their hub
+if ($branchHubId && !$locFilter) {
+    $locFilter = $branchHubId;
+}
+$archivedOnly = ($statusFilter === 'archived');
+
+// Counts for filter pills -- scoped for branch admins
+$hubCountSql = $branchHubId ? " AND current_location_id = {$branchHubId}" : "";
+$totalVehicles = (int)db()->query("SELECT COUNT(*) FROM vehicles WHERE deleted_at IS NULL{$hubCountSql}")->fetchColumn();
+$operationalCount = (int)db()->query("SELECT COUNT(*) FROM vehicles WHERE status = 'operational' AND deleted_at IS NULL{$hubCountSql}")->fetchColumn();
+$maintenanceCount = (int)db()->query("SELECT COUNT(*) FROM vehicles WHERE status = 'maintenance' AND deleted_at IS NULL{$hubCountSql}")->fetchColumn();
+$retiredCount = (int)db()->query("SELECT COUNT(*) FROM vehicles WHERE status = 'retired' AND deleted_at IS NULL{$hubCountSql}")->fetchColumn();
+$archivedCount = (int)db()->query("SELECT COUNT(*) FROM vehicles WHERE deleted_at IS NOT NULL{$hubCountSql}")->fetchColumn();
 
 // Build filter query
 $whereConditions = [];
 $queryParams = [];
 
-if (in_array($statusFilter, ['operational', 'maintenance', 'retired'], true)) {
-    $whereConditions[] = 'v.status = ?';
-    $queryParams[] = $statusFilter;
+if ($archivedOnly) {
+    $whereConditions[] = 'v.deleted_at IS NOT NULL';
+} else {
+    $whereConditions[] = 'v.deleted_at IS NULL';
+    if (in_array($statusFilter, ['operational', 'maintenance', 'retired'], true)) {
+        $whereConditions[] = 'v.status = ?';
+        $queryParams[] = $statusFilter;
+    }
+}
+
+if ($locFilter) {
+    $whereConditions[] = 'v.current_location_id = ?';
+    $queryParams[] = $locFilter;
 }
 
 if ($search !== '') {
@@ -131,9 +217,13 @@ $totalPages = max(1, (int)ceil($filteredTotal / $perPage));
 $page = min($page, $totalPages);
 $offset = ($page - 1) * $perPage;
 
-$vehicleSql = "SELECT v.*, c.name AS category
+$vehicleSql = "SELECT v.*, c.name AS category,
+                      cl.name AS current_location_name, cl.city AS current_location_city,
+                      hl.name AS home_location_name
                FROM vehicles v
                INNER JOIN vehicle_categories c ON c.id = v.category_id
+               LEFT JOIN locations cl ON cl.id = v.current_location_id
+               LEFT JOIN locations hl ON hl.id = v.home_location_id
                {$whereClause}
                ORDER BY v.status = 'operational' DESC, v.brand ASC, v.model ASC
                LIMIT {$perPage} OFFSET {$offset}";
@@ -271,6 +361,48 @@ include __DIR__ . '/../../includes/header.php';
             </div>
 
             <div>
+              <label for="current_location_id">Stationed Venue / Hub</label>
+              <?php if ($branchHubId): ?>
+                <input type="hidden" name="current_location_id" value="<?= $branchHubId ?>">
+                <?php foreach ($allLocations as $loc): ?>
+                  <?php if ((int)$loc['id'] === $branchHubId): ?>
+                    <input type="text" value="<?= e($loc['name']) ?> (<?= e($loc['city']) ?>)" disabled style="background:#f8fafc; color:#64748b;">
+                  <?php endif; ?>
+                <?php endforeach; ?>
+              <?php else: ?>
+                <select id="current_location_id" name="current_location_id">
+                  <?php foreach ($allLocations as $loc): ?>
+                    <option value="<?= (int)$loc['id'] ?>" <?= ((int)($editing['current_location_id'] ?? 1) === (int)$loc['id']) ? 'selected' : '' ?>>
+                      <?= e($loc['name']) ?> (<?= e($loc['city']) ?>)
+                    </option>
+                  <?php endforeach; ?>
+                </select>
+              <?php endif; ?>
+            </div>
+
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+              <div>
+                <label for="fuel_capacity_liters">Fuel Tank (L)</label>
+                <input type="number" id="fuel_capacity_liters" name="fuel_capacity_liters" min="20" max="150" step="0.5" value="<?= e($editing['fuel_capacity_liters'] ?? 45.0) ?>">
+              </div>
+              <div>
+                <label for="daily_mileage_limit">Daily Limit (km)</label>
+                <input type="number" id="daily_mileage_limit" name="daily_mileage_limit" min="50" max="1000" step="10" value="<?= e($editing['daily_mileage_limit'] ?? 200) ?>">
+              </div>
+            </div>
+
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+              <div>
+                <label for="excess_mileage_rate">Excess (₱/km)</label>
+                <input type="number" id="excess_mileage_rate" name="excess_mileage_rate" min="1" max="100" step="0.5" value="<?= e($editing['excess_mileage_rate'] ?? 12.0) ?>">
+              </div>
+              <div>
+                <label for="next_service_mileage">Service Due (km)</label>
+                <input type="number" id="next_service_mileage" name="next_service_mileage" min="100" step="500" value="<?= e($editing['next_service_mileage'] ?? 5000) ?>">
+              </div>
+            </div>
+
+            <div>
               <label for="image">Image URL or Filename</label>
               <input type="text" id="image" name="image" value="<?= e($editing['image'] ?? '') ?>" placeholder="e.g. toyota-vios.jpg or https://...">
             </div>
@@ -295,15 +427,15 @@ include __DIR__ . '/../../includes/header.php';
             </div>
 
             <!-- Search -->
-            <form method="get" style="display:flex; gap:8px; align-items:center;">
+            <form method="get" style="display:flex; gap:6px; align-items:center;">
               <?php if ($statusFilter !== 'all'): ?><input type="hidden" name="status" value="<?= e($statusFilter) ?>"><?php endif; ?>
-              <input type="search" name="search" value="<?= e($search) ?>" placeholder="Search make, model, plate..." style="height: 40px; padding: 0 14px; border: 1.5px solid #cbd5e1; border-radius: 8px; font-size: 0.86rem; min-width: 220px;">
-              <button type="submit" class="btn btn-secondary" style="height: 40px; padding: 0 16px; font-size: 0.84rem;">Search</button>
+              <input type="search" name="search" value="<?= e($search) ?>" placeholder="Search make, model, plate..." style="height: 34px; padding: 0 12px; border: 1.5px solid #cbd5e1; border-radius: 6px; font-size: 0.82rem; min-width: 200px;">
+              <button type="submit" class="btn btn-secondary" style="height: 34px; min-height: 34px; padding: 0 14px; font-size: 0.80rem; border-radius: 6px;">Search</button>
             </form>
           </div>
 
           <!-- Status Filters -->
-          <div class="admin-filter-bar">
+          <div class="admin-filter-bar" style="display:flex; flex-wrap:wrap; align-items:center; gap:8px;">
             <a href="?status=all<?= $search !== '' ? '&search=' . urlencode($search) : '' ?>" class="admin-filter-pill <?= $statusFilter === 'all' ? 'active' : '' ?>">
               <span>All Fleet</span>
               <span class="pill-count"><?= $totalVehicles ?></span>
@@ -320,6 +452,27 @@ include __DIR__ . '/../../includes/header.php';
               <span>Retired</span>
               <span class="pill-count"><?= $retiredCount ?></span>
             </a>
+            <a href="?status=archived<?= $search !== '' ? '&search=' . urlencode($search) : '' ?>" class="admin-filter-pill <?= $statusFilter === 'archived' ? 'active' : '' ?>" style="border-color:#fca5a5;">
+              <span>Archived (Soft-Deleted)</span>
+              <span class="pill-count"><?= $archivedCount ?></span>
+            </a>
+
+            <!-- Venue Hub Filter Dropdown -->
+            <form method="get" style="margin-left:auto; display:flex; align-items:center; gap:6px;">
+              <input type="hidden" name="status" value="<?= e($statusFilter) ?>">
+              <?php if ($search !== ''): ?><input type="hidden" name="search" value="<?= e($search) ?>"><?php endif; ?>
+              <label for="hub-filter" style="font-size:0.78rem; font-weight:700; color:#475569; margin:0;">Hub:</label>
+              <select id="hub-filter" name="location" onchange="this.form.submit()" style="font-size:0.8rem; padding:4px 8px; border:1px solid #cbd5e1; border-radius:6px;" <?= $branchHubId ? 'disabled' : '' ?>>
+                <?php if (!$branchHubId): ?>
+                  <option value="">All Venues &amp; Hubs</option>
+                <?php endif; ?>
+                <?php foreach ($allLocations as $loc): ?>
+                  <option value="<?= (int)$loc['id'] ?>" <?= $locFilter === (int)$loc['id'] ? 'selected' : '' ?>>
+                    <?= e($loc['name']) ?> (<?= e($loc['city']) ?>)
+                  </option>
+                <?php endforeach; ?>
+              </select>
+            </form>
           </div>
 
           <!-- Table -->
@@ -356,7 +509,10 @@ include __DIR__ . '/../../includes/header.php';
 
                       <td>
                         <div style="font-size:0.84rem; font-weight:700; color:#0f172a;"><?= e($vehicle['category']) ?></div>
-                        <span style="font-size:0.75rem; color:#64748b;"><?= e($vehicle['transmission']) ?> · <?= (int)$vehicle['seats'] ?> Seats</span>
+                        <span style="font-size:0.75rem; color:#64748b; display:block;"><?= e($vehicle['transmission']) ?> · <?= (int)$vehicle['seats'] ?> Seats</span>
+                        <span style="font-size:0.73rem; color:#0369a1; font-weight:600; display:inline-block; margin-top:2px;">
+                          <?= e($vehicle['current_location_name'] ?? 'Main Campus Hub') ?>
+                        </span>
                       </td>
 
                       <td>
@@ -365,7 +521,9 @@ include __DIR__ . '/../../includes/header.php';
                       </td>
 
                       <td>
-                        <?php if ($vehicle['status'] === 'operational'): ?>
+                        <?php if (!empty($vehicle['deleted_at'])): ?>
+                          <span class="portal-badge badge-danger">Archived</span>
+                        <?php elseif ($vehicle['status'] === 'operational'): ?>
                           <span class="portal-badge badge-success">Operational</span>
                         <?php elseif ($vehicle['status'] === 'maintenance'): ?>
                           <span class="portal-badge badge-warning">Maintenance</span>
@@ -375,22 +533,42 @@ include __DIR__ . '/../../includes/header.php';
                       </td>
 
                       <td>
-                        <div style="display:flex; align-items:center; gap:8px;">
-                          <a href="?edit=<?= (int)$vehicle['id'] ?>#vehicle-form" class="btn btn-secondary" style="padding: 5px 10px; font-size:0.76rem;">Edit</a>
-                          <?php if ($vehicle['status'] !== 'retired'): ?>
-                            <form method="post" style="display:inline;">
-                              <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
-                              <input type="hidden" name="action" value="retire">
-                              <input type="hidden" name="id" value="<?= (int)$vehicle['id'] ?>">
-                              <button type="submit" class="btn btn-outline" style="padding: 5px 8px; font-size:0.76rem; color:#991b1b; border-color:#fecaca;" onclick="return confirm('Retire this vehicle from active duty?');">Retire</button>
-                            </form>
+                        <?php $canManageThisVehicle = $isSuperAdmin || !$branchHubId || (int)($vehicle['current_location_id'] ?? 0) === $branchHubId; ?>
+                        <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                          <?php if ($canManageThisVehicle): ?>
+                            <?php if (empty($vehicle['deleted_at'])): ?>
+                              <a href="?edit=<?= (int)$vehicle['id'] ?>#vehicle-form" class="btn btn-secondary" style="padding: 4px 8px; font-size:0.74rem;">Edit</a>
+                              <?php if ($vehicle['status'] !== 'retired'): ?>
+                                <form method="post" style="display:inline;">
+                                  <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
+                                  <input type="hidden" name="action" value="retire">
+                                  <input type="hidden" name="id" value="<?= (int)$vehicle['id'] ?>">
+                                  <button type="submit" class="btn btn-outline" style="padding: 4px 6px; font-size:0.74rem; color:#991b1b; border-color:#fecaca;" onclick="return confirm('Retire this vehicle?');">Retire</button>
+                                </form>
+                              <?php else: ?>
+                                <form method="post" style="display:inline;">
+                                  <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
+                                  <input type="hidden" name="action" value="restore">
+                                  <input type="hidden" name="id" value="<?= (int)$vehicle['id'] ?>">
+                                  <button type="submit" class="btn btn-secondary" style="padding: 4px 6px; font-size:0.74rem; color:#065f46;">Unretire</button>
+                                </form>
+                              <?php endif; ?>
+                              <form method="post" style="display:inline;">
+                                <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
+                                <input type="hidden" name="action" value="soft_delete">
+                                <input type="hidden" name="id" value="<?= (int)$vehicle['id'] ?>">
+                                <button type="submit" class="btn btn-outline" style="padding: 4px 6px; font-size:0.74rem; color:#dc2626; border-color:#fca5a5;" onclick="return confirm('Archive this vehicle? It will be safely soft-deleted while preserving all past rental records.');">Archive</button>
+                              </form>
+                            <?php else: ?>
+                              <form method="post" style="display:inline;">
+                                <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
+                                <input type="hidden" name="action" value="restore_soft_delete">
+                                <input type="hidden" name="id" value="<?= (int)$vehicle['id'] ?>">
+                                <button type="submit" class="btn btn-secondary" style="padding: 4px 8px; font-size:0.74rem; color:#065f46;" onclick="return confirm('Restore this vehicle back to the active fleet?');">Restore Asset</button>
+                              </form>
+                            <?php endif; ?>
                           <?php else: ?>
-                            <form method="post" style="display:inline;">
-                              <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
-                              <input type="hidden" name="action" value="restore">
-                              <input type="hidden" name="id" value="<?= (int)$vehicle['id'] ?>">
-                              <button type="submit" class="btn btn-secondary" style="padding: 5px 8px; font-size:0.76rem; color:#065f46;">Restore</button>
-                            </form>
+                            <span style="font-size:0.72rem; color:#94a3b8; font-style:italic;">Managed by another hub</span>
                           <?php endif; ?>
                         </div>
                       </td>

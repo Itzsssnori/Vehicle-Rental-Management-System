@@ -19,6 +19,9 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         $pdo->beginTransaction();
 
         if ($action === 'suspend_customer') {
+            if (!is_super_admin($user)) {
+                throw new RuntimeException('Only Super Administrators can suspend customer accounts.');
+            }
             $incidentId = (int)($_POST['incident_id'] ?? 0);
             $reason = trim($_POST['reason'] ?? '');
             if (!$incidentId || $reason === '') {
@@ -44,6 +47,9 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         }
 
         if ($action === 'archive_customer') {
+            if (!is_super_admin($user)) {
+                throw new RuntimeException('Only Super Administrators can archive customer accounts.');
+            }
             $incidentId = (int)($_POST['incident_id'] ?? 0);
             $reason = trim($_POST['reason'] ?? '');
             if (!$incidentId || $reason === '') {
@@ -263,11 +269,11 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             $conflict = $pdo->prepare(
                 "SELECT COUNT(*) FROM reservations
                  WHERE vehicle_id = ? AND id <> ? AND status = 'confirmed'
-                 AND requested_pickup_at < ? AND requested_return_at > ?"
+                 AND requested_pickup_at < DATE_ADD(?, INTERVAL 2 HOUR) AND DATE_ADD(requested_return_at, INTERVAL 2 HOUR) > ?"
             );
             $conflict->execute([$reservation['vehicle_id'], $reservationId, $reservation['requested_return_at'], $reservation['requested_pickup_at']]);
             if ((int)$conflict->fetchColumn() > 0) {
-                throw new RuntimeException('This reservation overlaps another confirmed reservation.');
+                throw new RuntimeException('This reservation overlaps another confirmed booking or its 2-hour cleaning buffer.');
             }
             $maintenance = $pdo->prepare(
                 'SELECT COUNT(*) FROM maintenance
@@ -300,20 +306,49 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
 
 render_reservations:
 
+$allLocations = get_active_locations(db());
+$selectedHubId = null;
+if (!is_super_admin($user)) {
+    $selectedHubId = current_user_location_id($user);
+} elseif (!empty($_GET['hub'])) {
+    $selectedHubId = (int)$_GET['hub'];
+}
+
+$selectedHubName = '';
+if ($selectedHubId) {
+    foreach ($allLocations as $loc) {
+        if ((int)$loc['id'] === $selectedHubId) {
+            $selectedHubName = $loc['name'] . ' (' . $loc['city'] . ')';
+            break;
+        }
+    }
+}
+
 // Data queries
-$reservations = db()->query(
+$resHubParam = $selectedHubId ? [$selectedHubId, $selectedHubId] : [];
+$resWhere = $selectedHubId ? "WHERE (r.pickup_location_id = ? OR r.return_location_id = ?)" : "";
+$reservationsStmt = db()->prepare(
     "SELECT r.id, r.reference_number, r.requested_pickup_at, r.requested_return_at,
-            r.total_amount, r.status, r.created_at, u.name AS customer_name,
-            u.email AS customer_email, v.brand, v.model,
+            r.total_amount, r.status, r.created_at, r.protection_tier, r.protection_fee,
+            r.security_deposit_amount, r.security_deposit_status,
+            u.name AS customer_name, u.email AS customer_email,
+            v.brand, v.model,
+            pl.name AS pickup_location_name, rl.name AS return_location_name,
             (SELECT id FROM reservation_cancellation_requests WHERE reservation_id = r.id AND status = 'requested' LIMIT 1) AS cancel_request_id,
             (SELECT reason FROM reservation_cancellation_requests WHERE reservation_id = r.id AND status = 'requested' LIMIT 1) AS cancel_reason
      FROM reservations r
      INNER JOIN users u ON u.id = r.customer_id
      INNER JOIN vehicles v ON v.id = r.vehicle_id
+     LEFT JOIN locations pl ON pl.id = r.pickup_location_id
+     LEFT JOIN locations rl ON rl.id = r.return_location_id
+     {$resWhere}
      ORDER BY r.status = 'pending' DESC, r.created_at DESC"
-)->fetchAll();
+);
+$reservationsStmt->execute($resHubParam);
+$reservations = $reservationsStmt->fetchAll();
 
-$damageReports = db()->query(
+$damageWhere = $selectedHubId ? "AND (res.pickup_location_id = ? OR res.return_location_id = ?)" : "";
+$damageStmt = db()->prepare(
     "SELECT d.id, d.rental_id, d.description, d.estimated_cost, d.created_at,
             r.reservation_id, res.reference_number, u.name AS customer_name,
             v.brand, v.model
@@ -322,9 +357,11 @@ $damageReports = db()->query(
      INNER JOIN reservations res ON res.id = r.reservation_id
      INNER JOIN users u ON u.id = r.customer_id
      INNER JOIN vehicles v ON v.id = r.vehicle_id
-     WHERE d.status IN ('reported', 'under_review')
+     WHERE d.status IN ('reported', 'under_review') {$damageWhere}
      ORDER BY d.created_at ASC"
-)->fetchAll();
+);
+$damageStmt->execute($selectedHubId ? [$selectedHubId, $selectedHubId] : []);
+$damageReports = $damageStmt->fetchAll();
 
 $penaltyEvents = db()->query(
     "SELECT p.id, p.user_id, p.event_type, p.points, p.reason, p.created_at,
@@ -335,7 +372,8 @@ $penaltyEvents = db()->query(
      ORDER BY p.created_at ASC"
 )->fetchAll();
 
-$payments = db()->query(
+$payWhere = $selectedHubId ? "WHERE (r.pickup_location_id = ? OR r.return_location_id = ?)" : "";
+$paymentsStmt = db()->prepare(
     "SELECT p.id, p.reservation_id, p.amount, p.method, p.reference_number, p.paid_at,
             pr.receipt_number, r.reference_number AS reservation_reference,
             u.name AS customer_name
@@ -343,11 +381,15 @@ $payments = db()->query(
      INNER JOIN reservations r ON r.id = p.reservation_id
      INNER JOIN users u ON u.id = r.customer_id
      LEFT JOIN payment_receipts pr ON pr.payment_id = p.id
+     {$payWhere}
      ORDER BY p.paid_at DESC
      LIMIT 50"
-)->fetchAll();
+);
+$paymentsStmt->execute($selectedHubId ? [$selectedHubId, $selectedHubId] : []);
+$payments = $paymentsStmt->fetchAll();
 
-$incidents = db()->query(
+$incWhere = $selectedHubId ? "AND (res.pickup_location_id = ? OR res.return_location_id = ?)" : "";
+$incidentsStmt = db()->prepare(
     "SELECT i.id, i.status, i.description, i.created_at, r.customer_id,
             res.reference_number, u.name AS customer_name, v.brand, v.model
      FROM rental_incidents i
@@ -355,9 +397,11 @@ $incidents = db()->query(
      INNER JOIN reservations res ON res.id = r.reservation_id
      INNER JOIN users u ON u.id = r.customer_id
      INNER JOIN vehicles v ON v.id = r.vehicle_id
-     WHERE i.status IN ('open', 'contact_attempted', 'escalated')
+     WHERE i.status IN ('open', 'contact_attempted', 'escalated') {$incWhere}
      ORDER BY i.created_at ASC"
-)->fetchAll();
+);
+$incidentsStmt->execute($selectedHubId ? [$selectedHubId, $selectedHubId] : []);
+$incidents = $incidentsStmt->fetchAll();
 
 include __DIR__ . '/../../includes/header.php';
 ?>
@@ -399,6 +443,63 @@ include __DIR__ . '/../../includes/header.php';
         </div>
       </section>
 
+      <!-- Regional Hub Venue Scope Selector -->
+      <section class="portal-card" style="padding:12px 18px; margin-bottom:20px; background:#ffffff; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0284c7" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+          <strong style="font-size:0.86rem; color:#0f172a;">Regional Operations Scope:</strong>
+          <span style="font-size:0.82rem; color:#64748b;">
+            <?= $selectedHubId ? e($selectedHubName) : 'All Operations Hubs (Network View)' ?>
+          </span>
+        </div>
+
+        <?php if (is_super_admin($user)): ?>
+          <form method="get" style="display:flex; align-items:center; gap:8px;">
+            <label for="admin-rentals-hub" style="font-size:0.8rem; font-weight:700; color:#334155; margin:0;">Filter Hub:</label>
+            <select id="admin-rentals-hub" name="hub" onchange="this.form.submit()" style="font-size:0.84rem; padding:6px 12px; border:1px solid #cbd5e1; border-radius:8px; background:#f8fafc; font-weight:600;">
+              <option value="">All Regional Hubs (Global)</option>
+              <?php foreach ($allLocations as $loc): ?>
+                <option value="<?= (int)$loc['id'] ?>" <?= $selectedHubId === (int)$loc['id'] ? 'selected' : '' ?>>
+                  <?= e($loc['name']) ?> (<?= e($loc['city']) ?>)
+                </option>
+              <?php endforeach; ?>
+            </select>
+            <?php if ($selectedHubId): ?>
+              <a href="/admin/admin-rentals.php" class="btn btn-secondary" style="padding:4px 10px; font-size:0.75rem; border-radius:6px; text-decoration:none;">Reset</a>
+            <?php endif; ?>
+          </form>
+        <?php else: ?>
+          <span class="portal-badge badge-neutral">Assigned Branch Admin</span>
+        <?php endif; ?>
+      </section>
+
+      <!-- Quick Section Navigation Bar -->
+      <div class="admin-filter-bar" style="margin-bottom: 20px;">
+        <a href="#reservations-section" class="admin-filter-pill active">
+          <span>Reservations</span>
+          <span class="pill-count"><?= count($reservations) ?></span>
+        </a>
+        <a href="#damage-section" class="admin-filter-pill">
+          <span>Damage Reviews</span>
+          <span class="pill-count"><?= count($damageReports) ?></span>
+        </a>
+        <a href="/admin/admin-penalties.php" class="admin-filter-pill">
+          <span>Penalties &amp; Standing</span>
+          <span class="pill-count"><?= count($penaltyEvents) ?></span>
+        </a>
+        <a href="/admin/admin-incidents.php" class="admin-filter-pill">
+          <span>Incidents &amp; Escalations</span>
+          <span class="pill-count"><?= count($incidents) ?></span>
+        </a>
+        <a href="/admin/admin-disputes.php" class="admin-filter-pill">
+          <span>Disputes &amp; Appeals</span>
+        </a>
+        <a href="#payments-section" class="admin-filter-pill">
+          <span>Settlement Ledger</span>
+          <span class="pill-count"><?= count($payments) ?></span>
+        </a>
+      </div>
+
       <!-- Feedback notifications -->
       <?php if ($message): ?>
         <div class="portal-card" style="border-left: 4px solid #10b981; background: #ecfdf5; padding: 14px 18px; margin-bottom: 20px;" role="status">
@@ -432,10 +533,10 @@ include __DIR__ . '/../../includes/header.php';
           <table class="portal-table">
             <thead>
               <tr>
-                <th>Reference</th>
+                <th>Reference & Charges</th>
                 <th>Customer</th>
-                <th>Vehicle</th>
-                <th>Schedule Window</th>
+                <th>Vehicle & Route</th>
+                <th>Schedule & Protection</th>
                 <th>Status</th>
                 <th>Administrative Actions</th>
               </tr>
@@ -450,7 +551,10 @@ include __DIR__ . '/../../includes/header.php';
                   <tr style="<?= $res['status'] === 'pending' ? 'background:#fffdfa;' : '' ?>">
                     <td>
                       <strong style="font-size:0.86rem; font-family:monospace; color:#0f172a;"><?= e($res['reference_number']) ?></strong>
-                      <span style="font-size:0.72rem; color:#64748b; display:block;">₱<?= number_format((float)$res['total_amount'], 2) ?></span>
+                      <span style="font-size:0.75rem; font-weight:700; color:#0f172a; display:block;">₱<?= number_format((float)$res['total_amount'], 2) ?></span>
+                      <?php if ((float)$res['security_deposit_amount'] > 0): ?>
+                        <span style="font-size:0.7rem; color:#64748b; display:block;">Deposit: ₱<?= number_format((float)$res['security_deposit_amount']) ?> (<?= e($res['security_deposit_status'] ?: 'held') ?>)</span>
+                      <?php endif; ?>
                     </td>
 
                     <td>
@@ -459,12 +563,26 @@ include __DIR__ . '/../../includes/header.php';
                     </td>
 
                     <td>
-                      <span style="font-size:0.84rem; font-weight:700; color:#1e293b;"><?= e($res['brand'] . ' ' . $res['model']) ?></span>
+                      <span style="font-size:0.84rem; font-weight:700; color:#1e293b; display:block;"><?= e($res['brand'] . ' ' . $res['model']) ?></span>
+                      <div style="font-size:0.72rem; color:#64748b; margin-top:2px; line-height:1.35;">
+                        <div>Pickup: <span style="color:#0f172a; font-weight:600;"><?= e(trim(explode('(', $res['pickup_location_name'] ?: 'Main Hub')[0])) ?></span></div>
+                        <?php if ($res['return_location_name'] && $res['return_location_name'] !== $res['pickup_location_name']): ?>
+                          <div style="color:#0284c7; font-weight:600;">Return: <?= e(trim(explode('(', $res['return_location_name'])[0])) ?> <span class="portal-badge badge-neutral" style="font-size:0.65rem; padding:1px 5px;">Transfer</span></div>
+                        <?php else: ?>
+                          <div>Return: <span style="color:#0f172a;"><?= e(trim(explode('(', $res['return_location_name'] ?: $res['pickup_location_name'] ?: 'Main Hub')[0])) ?></span></div>
+                        <?php endif; ?>
+                      </div>
                     </td>
 
                     <td>
                       <span style="font-size:0.8rem; font-weight:600; color:#0f172a;"><?= e(date('M j, Y · g:i A', strtotime($res['requested_pickup_at']))) ?></span>
                       <span style="font-size:0.74rem; color:#64748b; display:block;">to <?= e(date('M j, Y · g:i A', strtotime($res['requested_return_at']))) ?></span>
+                      <?php
+                        $protInfo = get_protection_plan_info($res['protection_tier'] ?? 'basic');
+                      ?>
+                      <span class="portal-badge badge-neutral" style="margin-top:4px; font-size:0.68rem; padding:2px 6px;">
+                        <?= e($protInfo['name']) ?>
+                      </span>
                     </td>
 
                     <td>
@@ -716,8 +834,10 @@ include __DIR__ . '/../../includes/header.php';
                         <input name="reason" maxlength="255" required placeholder="Decision justification..." style="padding: 4px 8px; border: 1.5px solid #cbd5e1; border-radius: 6px; font-size: 0.76rem;">
 
                         <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                          <?php if (is_super_admin($user)): ?>
                           <button class="btn btn-coral" name="action" value="suspend_customer" type="submit" style="padding: 5px 10px; font-size: 0.74rem;" onclick="return confirm('Suspend customer account for this incident?');">Suspend</button>
                           <button class="btn btn-secondary" name="action" value="archive_customer" type="submit" style="padding: 5px 10px; font-size: 0.74rem; color:#991b1b; border-color:#fecaca;" onclick="return confirm('Archive and deactivate customer account for unreturned vehicle?');">Archive</button>
+                          <?php endif; ?>
                           
                           <select name="escalation_type" style="padding: 4px 6px; border: 1.5px solid #cbd5e1; border-radius: 6px; font-size: 0.74rem; background: #ffffff;">
                             <option value="institutional_review">Institutional Review</option>
