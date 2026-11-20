@@ -4,7 +4,7 @@ require_once __DIR__ . '/../config.php';
 $error = '';
 
 if (current_user()) {
-    header('Location: /customer/dashboard.php');
+    header('Location: /vehicles.php');
     exit;
 }
 
@@ -26,7 +26,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $pdo = db();
             $pdo->beginTransaction();
             try {
-                $stmt = $pdo->prepare("INSERT INTO users (name, email, password_hash, account_status) VALUES (?, ?, ?, 'approved')");
+                $stmt = $pdo->prepare("INSERT INTO users (name, email, password_hash, account_status, email_verified_at) VALUES (?, ?, ?, 'approved', NOW())");
                 $stmt->execute([$name, $email, password_hash($password, PASSWORD_DEFAULT)]);
                 $userId = (int)$pdo->lastInsertId();
                 $role = $pdo->prepare("SELECT id FROM roles WHERE name = 'customer' LIMIT 1");
@@ -37,10 +37,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 $assignment = $pdo->prepare('INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)');
                 $assignment->execute([$userId, $roleId]);
-                $token = issue_auth_token($pdo, $userId, 'email_verification', 24);
                 write_audit($pdo, $userId, 'customer_registered', 'users', $userId, 'Public customer account created.');
                 $pdo->commit();
-                deliver_auth_link('email verification', $email, app_url('/verify-email.php?token=' . urlencode($token)));
             } catch (Throwable $exception) {
                 if ($pdo->inTransaction()) {
                     $pdo->rollBack();
@@ -49,7 +47,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $error = 'The account could not be created. Please try again.';
             }
             if ($error === '') {
-                header('Location: /verify-email.php?sent=1');
+                header('Location: /login.php?registered=1');
                 exit;
             }
         }
@@ -86,7 +84,7 @@ include __DIR__ . '/../includes/header.php';
         <span class="alert-icon" aria-hidden="true">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
         </span>
-        <span>A verification link will be sent to your email before completing reservations. Staff accounts require administrator approval.</span>
+        <span>Your customer account is activated immediately upon registration. Staff accounts require administrator approval.</span>
       </div>
 
       <?php if ($error): ?>

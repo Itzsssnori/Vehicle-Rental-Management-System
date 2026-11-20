@@ -8,6 +8,8 @@ $profileMessage = '';
 $profileError = '';
 $passwordMessage = '';
 $passwordError = '';
+$statutoryMessage = '';
+$statutoryError = '';
 
 // Load user record
 $stmt = $pdo->prepare('SELECT id, name, email, phone, address, profile_image, preferred_payment_method, account_status, email_verified_at, created_at, password_hash FROM users WHERE id = ?');
@@ -75,8 +77,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             write_audit($pdo, (int)$user['id'], 'password_change', 'users', $user['id'], 'Customer changed account password');
             $passwordMessage = 'Your security password has been successfully updated.';
         }
+    } elseif ($action === 'submit_statutory_id') {
+        $eligType = $_POST['eligibility_type'] ?? '';
+        $idNumber = trim($_POST['id_number'] ?? '');
+        $authority = trim($_POST['issuing_authority'] ?? '');
+        $expiryDate = trim($_POST['expiry_date'] ?? '');
+
+        if (!in_array($eligType, ['senior_citizen', 'pwd'], true) || $idNumber === '' || $authority === '') {
+            $statutoryError = 'Please select an eligibility type and enter your official OSCA/NCDA ID number and issuing authority.';
+        } else {
+            try {
+                $stmtStat = $pdo->prepare(
+                    "INSERT INTO customer_eligibility_verifications (user_id, eligibility_type, id_number, issuing_authority, expiry_date, verification_status)
+                     VALUES (?, ?, ?, ?, ?, 'pending')
+                     ON DUPLICATE KEY UPDATE issuing_authority = VALUES(issuing_authority), expiry_date = VALUES(expiry_date), verification_status = 'pending'"
+                );
+                $stmtStat->execute([(int)$user['id'], $eligType, $idNumber, $authority, $expiryDate ?: null]);
+                write_audit($pdo, (int)$user['id'], 'statutory_id_submitted', 'customer_eligibility_verifications', (int)$user['id'], "Submitted {$eligType} ID {$idNumber}");
+                $statutoryMessage = 'Your statutory ID has been submitted for administrator verification. Once verified, 20% + VAT-exempt rates will appear automatically at checkout.';
+            } catch (Throwable $ex) {
+                $statutoryError = 'Could not submit ID verification. Ensure the ID number is not already linked to another account.';
+            }
+        }
     }
 }
+
+$statutoryRecord = null;
+try {
+    $sStmt = $pdo->prepare('SELECT * FROM customer_eligibility_verifications WHERE user_id = ? ORDER BY updated_at DESC LIMIT 1');
+    $sStmt->execute([(int)$user['id']]);
+    $statutoryRecord = $sStmt->fetch(PDO::FETCH_ASSOC) ?: null;
+} catch (Throwable $ignore) {}
 
 include __DIR__ . '/../../includes/header.php';
 ?>
@@ -428,6 +459,74 @@ include __DIR__ . '/../../includes/header.php';
                 </div>
               </div>
             </form>
+          </section>
+
+          <!-- Card 3: Statutory Senior Citizen / PWD Verification -->
+          <section class="portal-card" id="statutory-id" style="margin-top:20px;">
+            <div class="portal-card-header" style="margin-bottom:16px;">
+              <div class="portal-card-title-group">
+                <h2 style="margin:0 0 2px;">Senior Citizen &amp; PWD Statutory Verification</h2>
+                <p style="margin:0;">Verify your OSCA (RA 9994) or NCDA (RA 10754) ID for mandatory 20% discount + 12% PH VAT exemption on rentals.</p>
+              </div>
+              <?php if ($statutoryRecord): ?>
+                <?php
+                  $stBadge = match ($statutoryRecord['verification_status']) {
+                    'verified' => 'badge-success',
+                    'rejected', 'expired' => 'badge-danger',
+                    default => 'badge-warning',
+                  };
+                ?>
+                <span class="portal-badge <?= $stBadge ?>"><?= e(ucfirst($statutoryRecord['verification_status'])) ?></span>
+              <?php endif; ?>
+            </div>
+
+            <?php if ($statutoryMessage): ?>
+              <div class="portal-alert-success" style="margin-bottom:16px;"><span><?= e($statutoryMessage) ?></span></div>
+            <?php endif; ?>
+            <?php if ($statutoryError): ?>
+              <div class="portal-alert-danger" style="margin-bottom:16px;"><span><?= e($statutoryError) ?></span></div>
+            <?php endif; ?>
+
+            <?php if ($statutoryRecord && $statutoryRecord['verification_status'] === 'verified'): ?>
+              <div style="padding:14px 16px; background:#ecfdf5; border:1px solid #a7f3d0; border-radius:10px; font-size:0.86rem; color:#065f46;">
+                <strong>Verified Statutory Privilege Active:</strong>
+                <?= $statutoryRecord['eligibility_type'] === 'senior_citizen' ? 'Senior Citizen (RA 9994)' : 'Person with Disability (RA 10754)' ?>
+                &middot; ID: <code><?= e($statutoryRecord['id_number']) ?></code>
+                &middot; Issued by: <?= e($statutoryRecord['issuing_authority']) ?>.
+              </div>
+            <?php else: ?>
+              <form method="post" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:14px;">
+                <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
+                <input type="hidden" name="action" value="submit_statutory_id">
+
+                <div class="settings-field-group">
+                  <label for="elig-type">Privilege Type</label>
+                  <select id="elig-type" name="eligibility_type" required>
+                    <option value="senior_citizen" <?= ($statutoryRecord['eligibility_type'] ?? '') === 'senior_citizen' ? 'selected' : '' ?>>Senior Citizen (OSCA — RA 9994)</option>
+                    <option value="pwd" <?= ($statutoryRecord['eligibility_type'] ?? '') === 'pwd' ? 'selected' : '' ?>>Person with Disability (NCDA — RA 10754)</option>
+                  </select>
+                </div>
+
+                <div class="settings-field-group">
+                  <label for="elig-id">Official ID Number</label>
+                  <input id="elig-id" type="text" name="id_number" required placeholder="e.g. OSCA-QC-2026-1042" value="<?= e($statutoryRecord['id_number'] ?? '') ?>">
+                </div>
+
+                <div class="settings-field-group">
+                  <label for="elig-auth">Issuing LGU / Authority</label>
+                  <input id="elig-auth" type="text" name="issuing_authority" required placeholder="e.g. OSCA Makati City" value="<?= e($statutoryRecord['issuing_authority'] ?? '') ?>">
+                </div>
+
+                <div class="settings-field-group">
+                  <label for="elig-exp">Expiry Date (Optional)</label>
+                  <input id="elig-exp" type="date" name="expiry_date" value="<?= e($statutoryRecord['expiry_date'] ?? '') ?>">
+                </div>
+
+                <div style="grid-column:1 / -1;">
+                  <button type="submit" class="portal-btn-primary" style="height:40px; padding:0 20px;">Submit ID for Verification</button>
+                </div>
+              </form>
+            <?php endif; ?>
           </section>
         </div>
       </div>

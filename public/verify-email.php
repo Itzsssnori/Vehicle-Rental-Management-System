@@ -128,19 +128,6 @@ include __DIR__ . '/../includes/header.php';
           </div>
         <?php endif; ?>
 
-        <?php if ($demoLink): ?>
-          <div class="portal-demo-banner" role="note" style="margin-top:16px;">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-            <div>
-              <strong>Instant Verification Link (Local Testing):</strong>
-              <p style="margin:3px 0 6px; font-size:0.8rem; color:#475569;">
-                <?= ($mailDispatch && $mailDispatch['success']) ? 'For development testing, you can also use this direct link:' : 'To send real emails to user inboxes, configure SMTP in your <code>.env</code> file. For now, you can activate this account immediately below:' ?>
-              </p>
-              <a href="<?= e($demoLink) ?>" style="font-weight:700; text-decoration:underline;">Click here to activate and verify this account</a>
-            </div>
-          </div>
-        <?php endif; ?>
-
         <div style="margin-top:20px;">
           <a href="/login.php" class="portal-btn-primary auth-submit-btn" style="text-decoration:none;">
             <span>Go to Login</span>

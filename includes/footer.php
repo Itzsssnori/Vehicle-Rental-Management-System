@@ -90,5 +90,6 @@
   </div>
 </footer>
 <script src="/assets/app.js?v=<?= filemtime(__DIR__ . '/../public/assets/app.js') ?>"></script>
+<script src="/assets/offline-catalog.js?v=<?= filemtime(__DIR__ . '/../public/assets/offline-catalog.js') ?>"></script>
 </body>
 </html>

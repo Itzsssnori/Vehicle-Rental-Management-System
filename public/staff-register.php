@@ -32,7 +32,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $pdo->beginTransaction();
             try {
                 // Staff accounts are inserted with account_status = 'pending' awaiting administrator review
-                $stmt = $pdo->prepare("INSERT INTO users (name, email, password_hash, account_status) VALUES (?, ?, ?, 'pending')");
+                $stmt = $pdo->prepare("INSERT INTO users (name, email, password_hash, account_status, email_verified_at) VALUES (?, ?, ?, 'pending', NOW())");
                 $stmt->execute([$name, $email, password_hash($password, PASSWORD_DEFAULT)]);
                 $userId = (int)$pdo->lastInsertId();
 
@@ -46,11 +46,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $assignment = $pdo->prepare('INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)');
                 $assignment->execute([$userId, $roleId]);
 
-                $token = issue_auth_token($pdo, $userId, 'email_verification', 24);
                 write_audit($pdo, $userId, 'staff_registered', 'users', $userId, 'Staff registration submitted with pending status.');
                 $pdo->commit();
-
-                deliver_auth_link('email verification', $email, app_url('/verify-email.php?token=' . urlencode($token)));
             } catch (Throwable $exception) {
                 if ($pdo->inTransaction()) {
                     $pdo->rollBack();
@@ -105,21 +102,11 @@ include __DIR__ . '/../includes/header.php';
           <div>
             <strong>Next Steps for Staff Activation</strong>
             <ul style="margin:6px 0 0;padding-left:18px;font-size:0.86rem;line-height:1.5;">
-              <li><strong>Verify your email:</strong> Check your inbox for the activation link.</li>
-              <li><strong>Administrator approval:</strong> A system administrator must approve your staff permissions in User Management.</li>
+              <li><strong>Administrator approval:</strong> A system administrator will review and approve your staff permissions in User Management.</li>
+              <li><strong>Sign in once approved:</strong> After approval, log in using your registered email and password.</li>
             </ul>
           </div>
         </div>
-
-        <?php if ($demoLink): ?>
-          <div class="portal-demo-banner" role="note">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-            <div>
-              <strong>Demo Environment Link:</strong>
-              <a href="<?= e($demoLink) ?>">Open the generated verification link</a>
-            </div>
-          </div>
-        <?php endif; ?>
 
         <div style="margin-top:20px;display:flex;flex-direction:column;gap:10px;">
           <a href="/login.php" class="portal-btn-primary auth-submit-btn" style="text-decoration:none;">

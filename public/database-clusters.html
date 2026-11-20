@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VELO VRMS — 3NF Clustered Database Architecture</title>
+  <style>
+    :root {
+      --navy: #26384F;
+      --navy-dark: #162231;
+      --coral: #E66B68;
+      --bg: #F8F7F3;
+      --card: #FFFFFF;
+      --border: #E2E8F0;
+      --text: #1E293B;
+      --muted: #64748B;
+      --c1: #2563EB;
+      --c2: #059669;
+      --c3: #D97706;
+      --c4: #7C3AED;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.55;
+      padding: 28px 20px 64px;
+    }
+    .container { max-width: 1320px; margin: 0 auto; }
+    .hero {
+      background: linear-gradient(135deg, var(--navy-dark) 0%, var(--navy) 100%);
+      color: #FFFFFF;
+      border-radius: 18px;
+      padding: 32px 36px;
+      margin-bottom: 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 18px;
+      box-shadow: 0 10px 28px rgba(22, 34, 49, 0.14);
+    }
+    .hero-eyebrow {
+      font-size: 0.72rem;
+      font-weight: 800;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--coral);
+      margin-bottom: 6px;
+    }
+    .hero h1 { font-size: 1.75rem; font-weight: 800; letter-spacing: -0.02em; }
+    .hero p { font-size: 0.92rem; color: #CBD5E1; max-width: 680px; margin-top: 6px; }
+    .hero-badges { display: flex; gap: 10px; flex-wrap: wrap; }
+    .hero-stat {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 12px;
+      padding: 10px 16px;
+      text-align: center;
+      min-width: 110px;
+    }
+    .hero-stat strong { display: block; font-size: 1.25rem; color: #FFFFFF; }
+    .hero-stat span { font-size: 0.72rem; color: #CBD5E1; text-transform: uppercase; letter-spacing: 0.05em; }
+
+    /* Filter Tabs */
+    .filter-bar {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 22px;
+    }
+    .filter-btn {
+      background: var(--card);
+      border: 1.5px solid var(--border);
+      color: var(--text);
+      padding: 8px 16px;
+      border-radius: 999px;
+      font-size: 0.82rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .filter-btn:hover { border-color: var(--navy); }
+    .filter-btn.active { background: var(--navy); color: #FFFFFF; border-color: var(--navy); }
+
+    /* Cluster Sections */
+    .cluster-section {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 24px;
+      margin-bottom: 24px;
+      box-shadow: 0 4px 16px rgba(15, 23, 42, 0.04);
+    }
+    .cluster-section.is-hidden { display: none; }
+    .cluster-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+      padding-bottom: 16px;
+      margin-bottom: 20px;
+      border-bottom: 1px solid var(--border);
+      flex-wrap: wrap;
+    }
+    .cluster-tag {
+      display: inline-block;
+      font-size: 0.7rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 4px 10px;
+      border-radius: 999px;
+      color: #FFFFFF;
+      margin-bottom: 6px;
+    }
+    .tag-c1 { background: var(--c1); }
+    .tag-c2 { background: var(--c2); }
+    .tag-c3 { background: var(--c3); }
+    .tag-c4 { background: var(--c4); }
+    .cluster-header h2 { font-size: 1.2rem; color: var(--navy-dark); }
+    .cluster-header p { font-size: 0.84rem; color: var(--muted); margin-top: 2px; }
+    .norm-note {
+      background: #F8FAFC;
+      border-left: 3px solid var(--coral);
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 0.78rem;
+      color: #334155;
+      max-width: 440px;
+    }
+
+    /* Table Grid */
+    .table-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
+      gap: 16px;
+    }
+    .entity-card {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      background: #FFFFFF;
+      display: flex;
+      flex-direction: column;
+    }
+    .entity-title {
+      background: #F8FAFC;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .entity-title code {
+      font-size: 0.88rem;
+      font-weight: 800;
+      color: var(--navy-dark);
+    }
+    .entity-title span {
+      font-size: 0.7rem;
+      font-weight: 700;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+    .col-list { list-style: none; padding: 8px 14px 12px; font-size: 0.8rem; }
+    .col-list li {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 5px 0;
+      border-bottom: 1px dashed #F1F5F9;
+      gap: 8px;
+    }
+    .col-list li:last-child { border-bottom: none; }
+    .col-name { display: flex; align-items: center; gap: 6px; font-weight: 600; color: #0F172A; }
+    .col-type { font-family: monospace; font-size: 0.74rem; color: var(--muted); text-align: right; }
+    .key-badge {
+      font-size: 0.64rem;
+      font-weight: 800;
+      padding: 1px 5px;
+      border-radius: 4px;
+      text-transform: uppercase;
+    }
+    .k-pk { background: #DBEAFE; color: #1D4ED8; }
+    .k-fk { background: #FEF3C7; color: #B45309; }
+    .k-uq { background: #EDE9FE; color: #6D28D9; }
+
+    /* Diagram Card */
+    .diagram-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 24px;
+      margin-bottom: 24px;
+      overflow-x: auto;
+    }
+    .diagram-card h2 { font-size: 1.15rem; color: var(--navy-dark); margin-bottom: 6px; }
+    .diagram-card p { font-size: 0.82rem; color: var(--muted); margin-bottom: 16px; }
+    .mermaid { text-align: center; }
+    .offline-fallback {
+      display: none;
+      background: #F8FAFC;
+      border: 1px dashed #CBD5E1;
+      padding: 16px;
+      border-radius: 10px;
+      font-family: monospace;
+      font-size: 0.78rem;
+      white-space: pre;
+      overflow-x: auto;
+      color: #334155;
+    }
+    @media (max-width: 640px) {
+      .hero { padding: 22px 20px; }
+      .hero h1 { font-size: 1.35rem; }
+      .table-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header class="hero">
+      <div>
+        <div class="hero-eyebrow">VELO VRMS &middot; THIRD NORMAL FORM (3NF) ARCHITECTURE</div>
+        <h1>Clustered Database Schema Overview</h1>
+        <p>
+          Normalized relational schema eliminating transitive dependencies across four domain clusters:
+          Identity &amp; Personal, Fleet &amp; Business Assets, Operations &amp; Transactions, and Philippine Pricing &amp; Promotions.
+        </p>
+      </div>
+      <div class="hero-badges">
+        <div class="hero-stat"><strong>4</strong><span>Domain Clusters</span></div>
+        <div class="hero-stat"><strong>18</strong><span>Core 3NF Tables</span></div>
+        <div class="hero-stat"><strong>3NF</strong><span>Compliance</span></div>
+      </div>
+    </header>
+
+    <div class="filter-bar" role="tablist" aria-label="Filter schema clusters">
+      <button class="filter-btn active" data-cluster="all">All Clusters (4)</button>
+      <button class="filter-btn" data-cluster="c1">Cluster 1: Identity &amp; Personal</button>
+      <button class="filter-btn" data-cluster="c2">Cluster 2: Fleet &amp; Business Assets</button>
+      <button class="filter-btn" data-cluster="c3">Cluster 3: Operations &amp; Transactions</button>
+      <button class="filter-btn" data-cluster="c4">Cluster 4: Pricing &amp; Promotions</button>
+    </div>
+
+    <!-- CLUSTER 1 -->
+    <section class="cluster-section" data-cluster-box="c1">
+      <div class="cluster-header">
+        <div>
+          <span class="cluster-tag tag-c1">Cluster 1</span>
+          <h2>Identity &amp; Personal (Users &amp; Statutory Verification)</h2>
+          <p>Separates authentication credentials from personal license data and Senior/PWD verification records.</p>
+        </div>
+        <div class="norm-note">
+          <strong>3NF Rationale:</strong> Driver's license details and OSCA/NCDA statutory IDs depend on customer identity, not login sessions. Extracting them prevents NULL sprawl for admin/staff accounts.
+        </div>
+      </div>
+      <div class="table-grid">
+        <article class="entity-card">
+          <div class="entity-title"><code>users</code><span>Auth Core</span></div>
+          <ul class="col-list">
+            <li><span class="col-name"><span class="key-badge k-pk">PK</span> id</span><span class="col-type">INT AUTO_INC</span></li>
+            <li><span class="col-name"><span class="key-badge k-fk">FK</span> location_id</span><span class="col-type">INT NULL &rarr; locations</span></li>
+            <li><span class="col-name">name</span><span class="col-type">VARCHAR(120)</span></li>
+            <li><span class="col-name"><span class="key-badge k-uq">UQ</span> email</span><span class="col-type">VARCHAR(150)</span></li>
+            <li><span class="col-name">password_hash</span><span class="col-type">VARCHAR(255)</span></li>
+            <li><span class="col-name">account_status</span><span class="col-type">ENUM(pending..archived)</span></li>
+          </ul>
+        </article>
+
+        <article class="entity-card">
+          <div class="entity-title"><code>customer_profiles</code><span>Personal &amp; License</span></div>
+          <ul class="col-list">
+            <li><span class="col-name"><span class="key-badge k-pk">PK</span> id</span><span class="col-type">INT AUTO_INC</span></li>
+            <li><span class="col-name"><span class="key-badge k-fk">FK</span><span class="key-badge k-uq">UQ</span> user_id</span><span class="col-type">INT &rarr; users</span></li>
+            <li><span class="col-name">date_of_birth</span><span class="col-type">DATE</span></li>
+            <li><span class="col-name"><span class="key-badge k-uq">UQ</span> drivers_license_number</span><span class="col-type">VARCHAR(50)</span></li>
+            <li><span class="col-name">license_expiry_date</span><span class="col-type">DATE</span></li>
+            <li><span class="col-name">emergency_contact_name</span><span class="col-type">VARCHAR(120)</span></li>
+            <li><span class="col-name">emergency_contact_phone</span><span class="col-type">VARCHAR(30)</span></li>
+          </ul>
+        </article>
+
+        <article class="entity-card">
+          <div class="entity-title"><code>customer_eligibility_verifications</code><span>Senior / PWD</span></div>
+          <ul class="col-list">
+            <li><span class="col-name"><span class="key-badge k-pk">PK</span> id</span><span class="col-type">INT AUTO_INC</span></li>
+            <li><span class="col-name"><span class="key-badge k-fk">FK</span> user_id</span><span class="col-type">INT &rarr; users</span></li>
+            <li><span class="col-name"><span class="key-badge k-uq">UQ</span> eligibility_type</span><span class="col-type">ENUM(senior_citizen, pwd)</span></li>
+            <li><span class="col-name"><span class="key-badge k-uq">UQ</span> id_number</span><span class="col-type">VARCHAR(60)</span></li>
+            <li><span class="col-name">issuing_authority</span><span class="col-type">VARCHAR(120)</span></li>
+            <li><span class="col-name">verification_status</span><span class="col-type">ENUM(pending..expired)</span></li>
+            <li><span class="col-name"><span class="key-badge k-fk">FK</span> verified_by</span><span class="col-type">INT NULL &rarr; users</span></li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <!-- CLUSTER 2 -->
+    <section class="cluster-section" data-cluster-box="c2">
+      <div class="cluster-header">
+        <div>
+          <span class="cluster-tag tag-c2">Cluster 2</span>
+          <h2>Fleet &amp; Business Assets (Vehicles &amp; Lookup Tables)</h2>
+          <p>Eliminates brand/model/transmission/fuel string duplication via dedicated lookup tables.</p>
+        </div>
+        <div class="norm-note">
+          <strong>3NF Rationale:</strong> Previously <code>brand</code> &rarr; <code>model</code> &rarr; <code>category</code> created transitive dependencies inside <code>vehicles</code>. Now each asset references normalized <code>vehicle_models</code>, <code>transmission_types</code>, and <code>fuel_types</code>.
+        </div>
+      </div>
+      <div class="table-grid">
+        <article class="entity-card">
+          <div class="entity-title"><code>vehicle_makes</code><span>Lookup</span></div>
+          <ul class="col-list">
+            <li><span class="col-name"><span class="key-badge k-pk">PK</span> id</span><span class="col-type">INT AUTO_INC</span></li>
+            <li><span class="col-name"><span class="key-badge k-uq">UQ</span> name</span><span class="col-type">VARCHAR(60)</span></li>
+            <li><span class="col-name">country_of_origin</span><span class="col-type">VARCHAR(60)</span></li>
+            <li><span class="col-name">status</span><span class="col-type">ENUM(active, inactive)</span></li>
+          </ul>
+        </article>
+
+        <article class="entity-card">
+          <div class="entity-title"><code>vehicle_models</code><span>Model Catalog</span></div>
+          <ul class="col-list">
+            <li><span class="col-name"><span class="key-badge k-pk">PK</span> id</span><span class="col-type">INT AUTO_INC</span></li>
+            <li><span class="col-name"><span class="key-badge k-fk">FK</span> make_id</span><span class="col-type">INT &rarr; vehicle_makes</span></li>
+            <li><span class="col-name"><span class="key-badge k-fk">FK</span> category_id</span><span class="col-type">INT &rarr; vehicle_categories</span></li>
+            <li><span class="col-name"><span class="key-badge k-uq">UQ</span> name</span><span class="col-type">VARCHAR(80)</span></li>
+            <li><span class="col-name">default_seats</span><span class="col-type">TINYINT UNSIGNED</span></li>
+            <li><span class="col-name">default_fuel_capacity_liters</span><span class="col-type">DECIMAL(5,1)</span></li>
+          </ul>
+        </article>
+
+        <article class="entity-card">
+          <div class="entity-title"><code>transmission_types</code> &amp; <code>fuel_types</code><span>Lookups</span></div>
+          <ul class="col-list">
+            <li><span class="col-name"><span class="key-badge k-pk">PK</span> id</span><span class="col-type">TINYINT UNSIGNED</span></li>
+            <li><span class="col-name"><span class="key-badge k-uq">UQ</span> code</span><span class="col-type">VARCHAR(20)</span></li>
+            <li><span class="col-name"><span class="key-badge k-uq">UQ</span> label</span><span class="col-type">VARCHAR(50)</span></li>
+            <li><span class="col-name">surcharge_per_liter</span><span class="col-type">DECIMAL(8,2) (fuel_types)</span></li>
+          </ul>
+        </article>
+
+        <article class="entity-card">
+          <div class="entity-title"><code>vehicles</code><span>Physical Asset</span></div>
+          <ul class="col-list">
+            <li><span class="col-name"><span class="key-badge k-pk">PK</span> id</span><span class="col-type">INT AUTO_INC</span></li>
+            <li><span class="col-name"><span class="key-badge k-fk">FK</span> model_id</span><span class="col-type">INT &rarr; vehicle_models</span></li>
+            <li><span class="col-name"><span class="key-badge k-fk">FK</span> transmission_type_id</span><span class="col-type">TINYINT &rarr; transmission_types</span></li>
+            <li><span class="col-name"><span class="key-badge k-fk">FK</span> fuel_type_id</span><span class="col-type">TINYINT &rarr; fuel_types</span></li>
+            <li><span class="col-name"><span class="key-badge k-fk">FK</span> current_location_id</span><span class="col-type">INT &rarr; locations</span></li>
+            <li><span class="col-name"><span class="key-badge k-uq">UQ</span> plate_number</span><span class="col-type">VARCHAR(30)</span></li>
+            <li><span class="col-name">daily_rate</span><span class="col-type">DECIMAL(10,2)</span></li>
+            <li><span class="col-name">status</span><span class="col-type">ENUM(operational..retired)</span></li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <!-- CLUSTER 3 -->
+    <section class="cluster-section" data-cluster-box="c3">
+      <div class="cluster-header">
+        <div>
+          <span class="cluster-tag tag-c3">Cluster 3</span>
+          <h2>Operations &amp; Transactions (Bookings, Rentals &amp; Payments)</h2>
+          <p>Tracks end-to-end reservation lifecycles, dispatch/return odometer logs, damage checklists, and immutable financial totals.</p>
+        </div>
+        <div class="norm-note">
+          <strong>3NF Rationale:</strong> Pre-rental reservations, active rental handoffs, odometer/fuel return records, and multi-tender payments are decomposed into distinct lifecycle entities.
+        </div>
+      </div>
+      <div class="table-grid">
+        <article class="entity-card">
+          <div class="entity-title"><code>reservations</code><span>Booking Ledger</span></div>
+          <ul class="col-list">
+            <li><span class="col-name"><span class="key-badge k-pk">PK</span> id</span><span class="col-type">INT AUTO_INC</span></li>
+            <li><span class="col-name"><span class="key-badge k-uq">UQ</span> reference_number</span><span class="col-type">VARCHAR(30)</span></li>
+            <li><span class="col-name"><span class="key-badge k-fk">FK</span> customer_id</span><span class="col-type">INT &rarr; users</span></li>
+            <li><span class="col-name"><span class="key-badge k-fk">FK</span> vehicle_id</span><span class="col-type">INT &rarr; vehicles</span></li>
+            <li><span class="col-name">subtotal_before_tax</span><span class="col-type">DECIMAL(10,2)</span></li>
+            <li><span class="col-name">vat_amount / vat_exempt_amount</span><span class="col-type">DECIMAL(10,2)</span></li>
+            <li><span class="col-name">discount_amount</span><span class="col-type">DECIMAL(10,2)</span></li>
+            <li><span class="col-name">final_total</span><span class="col-type">DECIMAL(10,2)</span></li>
+          </ul>
+        </article>
+
+        <article class="entity-card">
+          <div class="entity-title"><code>rentals</code> &amp; <code>pickup_records</code><span>Turnover</span></div>
+          <ul class="col-list">
+            <li><span class="col-name"><span class="key-badge k-pk">PK</span> id</span><span class="col-type">INT AUTO_INC</span></li>
+            <li><span class="col-name"><span class="key-badge k-fk">FK</span> reservation_id</span><span class="col-type">INT &rarr; reservations</span></li>
+            <li><span class="col-name">picked_up_at / due_at</span><span class="col-type">DATETIME</span></li>
+            <li><span class="col-name">odometer_out / fuel_level_out</span><span class="col-type">INT / VARCHAR</span></li>
+            <li><span class="col-name">status</span><span class="col-type">ENUM(active..overdue)</span></li>
+          </ul>
+        </article>
+
+        <article class="entity-card">
+          <div class="entity-title"><code>return_records</code> &amp; <code>damage_reports</code><span>Check-In</span></div>
+          <ul class="col-list">
+            <li><span class="col-name"><span class="key-badge k-pk">PK</span> id</span><span class="col-type">INT AUTO_INC</span></li>
+            <li><span class="col-name"><span class="key-badge k-fk">FK</span> rental_id</span><span class="col-type">INT &rarr; rentals</span></li>
+            <li><span class="col-name">odometer_in / fuel_level_in</span><span class="col-type">INT / VARCHAR</span></li>
+            <li><span class="col-name">estimated_cost</span><span class="col-type">DECIMAL(10,2)</span></li>
+            <li><span class="col-name"><span class="key-badge k-fk">FK</span> inspected_by</span><span class="col-type">INT &rarr; users</span></li>
+          </ul>
+        </article>
+
+        <article class="entity-card">
+          <div class="entity-title"><code>payments</code> &amp; <code>payment_receipts</code><span>Settlements</span></div>
+          <ul class="col-list">
+            <li><span class="col-name"><span class="key-badge k-pk">PK</span> id</span><span class="col-type">INT AUTO_INC</span></li>
+            <li><span class="col-name"><span class="key-badge k-fk">FK</span> reservation_id</span><span class="col-type">INT &rarr; reservations</span></li>
+            <li><span class="col-name">amount</span><span class="col-type">DECIMAL(10,2)</span></li>
+            <li><span class="col-name">method</span><span class="col-type">ENUM(cash..online)</span></li>
+            <li><span class="col-name"><span class="key-badge k-uq">UQ</span> receipt_number</span><span class="col-type">VARCHAR(40)</span></li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <!-- CLUSTER 4 -->
+    <section class="cluster-section" data-cluster-box="c4">
+      <div class="cluster-header">
+        <div>
+          <span class="cluster-tag tag-c4">Cluster 4</span>
+          <h2>Pricing &amp; Promotions (Philippine Statutory &amp; Seasonal Rules)</h2>
+          <p>Rule-based discount catalog supporting RA 9994 Senior Citizen, RA 10754 PWD, PH Holidays, long-term tiers, and promo codes.</p>
+        </div>
+        <div class="norm-note">
+          <strong>3NF Rationale:</strong> Discount rules live independently of transactions; <code>reservation_discounts</code> freezes the applied rate and PHP savings at checkout so historical receipts never drift.
+        </div>
+      </div>
+      <div class="table-grid">
+        <article class="entity-card">
+          <div class="entity-title"><code>discount_types</code><span>Category Lookup</span></div>
+          <ul class="col-list">
+            <li><span class="col-name"><span class="key-badge k-pk">PK</span> id</span><span class="col-type">TINYINT UNSIGNED</span></li>
+            <li><span class="col-name"><span class="key-badge k-uq">UQ</span> code</span><span class="col-type">VARCHAR(40)</span></li>
+            <li><span class="col-name">is_statutory</span><span class="col-type">TINYINT(1)</span></li>
+            <li><span class="col-name">requires_id_verification</span><span class="col-type">TINYINT(1)</span></li>
+          </ul>
+        </article>
+
+        <article class="entity-card">
+          <div class="entity-title"><code>discount_rules</code><span>Rule Definitions</span></div>
+          <ul class="col-list">
+            <li><span class="col-name"><span class="key-badge k-pk">PK</span> id</span><span class="col-type">INT AUTO_INC</span></li>
+            <li><span class="col-name"><span class="key-badge k-fk">FK</span> discount_type_id</span><span class="col-type">TINYINT &rarr; discount_types</span></li>
+            <li><span class="col-name">calculation_mode</span><span class="col-type">ENUM(percentage, fixed)</span></li>
+            <li><span class="col-name">discount_value</span><span class="col-type">DECIMAL(10,2)</span></li>
+            <li><span class="col-name">vat_exempt_eligible</span><span class="col-type">TINYINT(1)</span></li>
+            <li><span class="col-name">min_rental_days</span><span class="col-type">SMALLINT UNSIGNED</span></li>
+            <li><span class="col-name">is_stackable / priority</span><span class="col-type">TINYINT</span></li>
+          </ul>
+        </article>
+
+        <article class="entity-card">
+          <div class="entity-title"><code>holiday_calendar</code> &amp; <code>promo_codes</code><span>Triggers</span></div>
+          <ul class="col-list">
+            <li><span class="col-name"><span class="key-badge k-pk">PK</span> id</span><span class="col-type">INT AUTO_INC</span></li>
+            <li><span class="col-name"><span class="key-badge k-fk">FK</span> discount_rule_id</span><span class="col-type">INT &rarr; discount_rules</span></li>
+            <li><span class="col-name">holiday_date / promo_window</span><span class="col-type">DATE (holiday_calendar)</span></li>
+            <li><span class="col-name"><span class="key-badge k-uq">UQ</span> code</span><span class="col-type">VARCHAR(40) (promo_codes)</span></li>
+            <li><span class="col-name">max_redemptions / current</span><span class="col-type">INT UNSIGNED</span></li>
+          </ul>
+        </article>
+
+        <article class="entity-card">
+          <div class="entity-title"><code>reservation_discounts</code><span>Junction Snapshot</span></div>
+          <ul class="col-list">
+            <li><span class="col-name"><span class="key-badge k-pk">PK</span> id</span><span class="col-type">INT AUTO_INC</span></li>
+            <li><span class="col-name"><span class="key-badge k-fk">FK</span> reservation_id</span><span class="col-type">INT &rarr; reservations</span></li>
+            <li><span class="col-name"><span class="key-badge k-fk">FK</span> discount_rule_id</span><span class="col-type">INT &rarr; discount_rules</span></li>
+            <li><span class="col-name"><span class="key-badge k-fk">FK</span> promo_code_id</span><span class="col-type">INT NULL &rarr; promo_codes</span></li>
+            <li><span class="col-name"><span class="key-badge k-fk">FK</span> eligibility_verification_id</span><span class="col-type">INT NULL &rarr; verifications</span></li>
+            <li><span class="col-name">computed_discount_amount</span><span class="col-type">DECIMAL(10,2)</span></li>
+            <li><span class="col-name">computed_vat_exemption</span><span class="col-type">DECIMAL(10,2)</span></li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <!-- MERMAID ER DIAGRAM -->
+    <section class="diagram-card">
+      <h2>Cross-Cluster Entity Relationship Diagram</h2>
+      <p>Visual foreign-key map connecting Identity, Fleet, Transactions, and Philippine Discount Rules.</p>
+      <div class="mermaid" id="er-diagram">
+erDiagram
+    users ||--o| customer_profiles : "has profile"
+    users ||--o{ customer_eligibility_verifications : "verifies Senior/PWD"
+    users ||--o{ reservations : "books"
+
+    vehicle_makes ||--o{ vehicle_models : "manufactures"
+    vehicle_categories ||--o{ vehicle_models : "classifies"
+    vehicle_models ||--o{ vehicles : "defines specs"
+    transmission_types ||--o{ vehicles : "equips"
+    fuel_types ||--o{ vehicles : "powers"
+    vehicles ||--o{ reservations : "reserved in"
+
+    reservations ||--o| rentals : "dispatches"
+    rentals ||--o| pickup_records : "logs checkout"
+    rentals ||--o| return_records : "logs checkin"
+    rentals ||--o{ damage_reports : "records"
+    reservations ||--o{ payments : "settled by"
+
+    discount_types ||--o{ discount_rules : "categorizes"
+    discount_rules ||--o{ holiday_calendar : "triggers on"
+    discount_rules ||--o{ promo_codes : "redeemed via"
+    reservations ||--o{ reservation_discounts : "applies snapshot"
+    discount_rules ||--o{ reservation_discounts : "referenced by"
+    promo_codes ||--o{ reservation_discounts : "used in"
+    customer_eligibility_verifications ||--o{ reservation_discounts : "authorizes"
+      </div>
+      <div class="offline-fallback" id="er-fallback">Offline mode detected — Text ER Summary:
+[Cluster 1] users (1:1) customer_profiles | users (1:N) customer_eligibility_verifications
+[Cluster 2] vehicle_makes (1:N) vehicle_models (1:N) vehicles | transmission_types &amp; fuel_types (1:N) vehicles
+[Cluster 3] users &amp; vehicles (1:N) reservations (1:1) rentals (1:1) pickup_records &amp; return_records | reservations (1:N) payments
+[Cluster 4] discount_types (1:N) discount_rules (1:N) holiday_calendar &amp; promo_codes | reservations (M:N via reservation_discounts) discount_rules</div>
+    </section>
+  </div>
+
+  <script>
+    // Interactive Cluster Filter Tabs
+    document.querySelectorAll('.filter-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        document.querySelectorAll('.filter-btn').forEach(function (b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        var selected = btn.getAttribute('data-cluster');
+        document.querySelectorAll('.cluster-section').forEach(function (sec) {
+          if (selected === 'all' || sec.getAttribute('data-cluster-box') === selected) {
+            sec.classList.remove('is-hidden');
+          } else {
+            sec.classList.add('is-hidden');
+          }
+        });
+      });
+    });
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js" onerror="document.getElementById('er-diagram').style.display='none';document.getElementById('er-fallback').style.display='block';"></script>
+  <script>
+    if (window.mermaid) {
+      mermaid.initialize({ startOnLoad: true, theme: 'base', themeVariables: { primaryColor: '#F8FAFC', primaryBorderColor: '#26384F', lineColor: '#64748B', fontFamily: 'Manrope, sans-serif' } });
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+[Unit]
+Description=XAMPP (Apache, MariaDB, ProFTPD) Local Stack for VELO VRMS
+After=network.target local-fs.target remote-fs.target
+Wants=network-online.target
+
+[Service]
+Type=forking
+ExecStart=/opt/lampp/lampp start
+ExecReload=/opt/lampp/lampp reload
+ExecStop=/opt/lampp/lampp stop
+RemainAfterExit=yes
+TimeoutStartSec=90
+TimeoutStopSec=60
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

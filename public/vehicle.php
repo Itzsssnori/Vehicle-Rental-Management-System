@@ -1,6 +1,7 @@
 <?php
 $title = 'Vehicle Details - Car Rental Portal';
 require_once __DIR__ . '/../config.php';
+require_once __DIR__ . '/../includes/pricing-engine.php';
 
 $id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
 $start = $_GET['start'] ?? date('Y-m-d');
@@ -38,14 +39,46 @@ $today = date('Y-m-d');
 $locations = get_active_locations();
 $defaultPickupLocationId = (int)($vehicle['current_location_id'] ?: ($locations[0]['id'] ?? 1));
 
-// Check user status & standing
+// Check user status, standing & verified statutory eligibility (Senior/PWD)
 $user = current_user();
 $standing = null;
 $canReserve = false;
+$verifiedStatutory = null;
 if ($user && $user['role'] === 'customer') {
   $standing = customer_standing(db(), (int)$user['id']);
   $canReserve = customer_can_reserve(db(), (int)$user['id']);
+  try {
+    $vStmt = db()->prepare(
+      "SELECT id, eligibility_type, id_number, issuing_authority
+       FROM customer_eligibility_verifications
+       WHERE user_id = ? AND verification_status = 'verified'
+         AND (expiry_date IS NULL OR expiry_date >= CURRENT_DATE)
+       ORDER BY verified_at DESC LIMIT 1"
+    );
+    $vStmt->execute([(int)$user['id']]);
+    $verifiedStatutory = $vStmt->fetch(PDO::FETCH_ASSOC) ?: null;
+  } catch (Throwable $ignore) {}
 }
+
+// Fetch active promo codes for client-side live calculator preview
+$activePromosForJs = [];
+try {
+  $pRows = db()->query(
+    "SELECT pc.code, dr.calculation_mode, dr.discount_value, dr.max_discount_cap, dr.min_rental_days, dr.min_base_amount
+     FROM promo_codes pc
+     INNER JOIN discount_rules dr ON dr.id = pc.discount_rule_id
+     WHERE pc.is_active = 1 AND dr.is_active = 1"
+  )->fetchAll(PDO::FETCH_ASSOC);
+  foreach ($pRows as $pr) {
+    $activePromosForJs[strtoupper($pr['code'])] = [
+      'mode' => $pr['calculation_mode'],
+      'val' => (float)$pr['discount_value'],
+      'cap' => $pr['max_discount_cap'] !== null ? (float)$pr['max_discount_cap'] : null,
+      'minDays' => (int)$pr['min_rental_days'],
+      'minAmt' => (float)$pr['min_base_amount'],
+    ];
+  }
+} catch (Throwable $ignore) {}
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   verify_csrf();
@@ -105,14 +138,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } else {
       $days = rental_days($start, $end);
       $baseTotal = (float)$vehicle['daily_rate'] * $days;
-      
-      // Calculate protection fee and security deposit
+      $promoCodeInput = strtoupper(trim((string)($_POST['promo_code'] ?? '')));
+      $applyStatutory = !empty($_POST['apply_statutory']) && $verifiedStatutory !== null;
+      $applyVatExemption = !empty($_POST['apply_vat_exemption']);
+
+      // Calculate protection fee, security deposit, and Philippine PricingEngine breakdown
       $planInfo = get_protection_plan_info($protectionTier);
       $protectionFee = (float)$planInfo['daily_fee'] * $days;
       $securityDeposit = calculate_security_deposit((int)$vehicle['category_id']);
-      $grandTotal = $baseTotal + $protectionFee;
 
       $pdo = db();
+      $pricingEngine = new PricingEngine($pdo, 12.0);
+      $pricing = $pricingEngine->calculate([
+        'customer_id'          => (int)current_user()['id'],
+        'daily_rate'           => (float)$vehicle['daily_rate'],
+        'pickup_at'            => $pickupAt,
+        'return_at'            => $returnAt,
+        'protection_daily_fee' => (float)$planInfo['daily_fee'],
+        'promo_code'           => $promoCodeInput,
+        'apply_statutory'      => $applyStatutory,
+        'apply_vat_exemption'  => $applyVatExemption,
+      ]);
+
+      if ($promoCodeInput !== '' && !empty($pricing['promo_error'])) {
+        $error = $pricing['promo_error'];
+      } else {
+      $grandTotal = (float)$pricing['final_total'];
+
       $pdo->beginTransaction();
       try {
         $reference = 'RES-' . strtoupper(bin2hex(random_bytes(5)));
@@ -140,6 +192,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
           $securityDeposit
         ]);
         $reservationId = (int)$pdo->lastInsertId();
+        $pricingEngine->persistToReservation($reservationId, $pricing);
         record_reservation_status($pdo, $reservationId, null, 'pending');
 
         // 1. Base rental charge
@@ -187,6 +240,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       }
       header('Location: /customer/dashboard.php?requested=' . $reservationId);
       exit;
+      }
     }
   }
 }
@@ -573,6 +627,34 @@ include __DIR__ . '/../includes/header.php';
               </div>
             </div>
 
+            <!-- Discounts & Statutory Privileges (PH Pricing Engine) -->
+            <div class="booking-form-group" style="margin-bottom:12px;">
+              <label for="booking-promo-code" style="font-size:0.73rem;">
+                <span class="field-icon" aria-hidden="true">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+                </span>
+                <span>Promo Code <span style="font-weight:500; color:#64748b;">(optional: VELO10, WEEKEND500)</span></span>
+              </label>
+              <input id="booking-promo-code" type="text" name="promo_code" value="<?= e($_POST['promo_code'] ?? '') ?>" maxlength="40" placeholder="Enter voucher code" oninput="updatePriceEstimate()" style="height:34px; font-size:0.82rem; text-transform:uppercase;">
+
+              <?php if ($verifiedStatutory): ?>
+                <div style="margin-top:8px; padding:8px 10px; background:#ecfdf5; border:1px solid #a7f3d0; border-radius:8px; font-size:0.74rem; color:#065f46;">
+                  <label style="display:flex; align-items:center; gap:6px; margin:0; cursor:pointer; font-weight:700; color:#065f46; text-transform:none; letter-spacing:0;">
+                    <input type="checkbox" id="booking-apply-statutory" name="apply_statutory" value="1" checked onchange="updatePriceEstimate()" style="width:auto; height:auto;">
+                    <span>Apply 20% <?= $verifiedStatutory['eligibility_type'] === 'senior_citizen' ? 'Senior Citizen (RA 9994)' : 'PWD (RA 10754)' ?> Discount</span>
+                  </label>
+                  <label style="display:flex; align-items:center; gap:6px; margin:4px 0 0 18px; cursor:pointer; font-weight:600; color:#047857; text-transform:none; letter-spacing:0; font-size:0.71rem;">
+                    <input type="checkbox" id="booking-apply-vat-exempt" name="apply_vat_exemption" value="1" checked onchange="updatePriceEstimate()" style="width:auto; height:auto;">
+                    <span>Include 12% PH VAT Exemption (Verified ID: <?= e($verifiedStatutory['id_number']) ?>)</span>
+                  </label>
+                </div>
+              <?php elseif (current_user() && current_user()['role'] === 'customer'): ?>
+                <p style="margin:6px 0 0; font-size:0.71rem; color:#64748b;">
+                  Senior Citizen or PWD? <a href="/customer/account-settings.php#statutory-id" style="color:var(--coral); font-weight:700;">Verify your OSCA/NCDA ID</a> for 20% + VAT-exempt rates.
+                </p>
+              <?php endif; ?>
+            </div>
+
             <!-- Live Price Breakdown Box -->
             <div class="portal-price-calc-box" style="margin-bottom:10px; padding:10px 14px;">
               <div class="calc-row">
@@ -590,6 +672,10 @@ include __DIR__ . '/../includes/header.php';
               <div class="calc-row">
                 <span class="calc-lbl">Protection Plan:</span>
                 <strong class="calc-val" id="calc-protection-fee">₱0</strong>
+              </div>
+              <div class="calc-row" id="calc-discount-row" style="display:none; color:#059669;">
+                <span class="calc-lbl" id="calc-discount-label">Discount &amp; VAT Savings:</span>
+                <strong class="calc-val" id="calc-discount-amount" style="color:#059669;">-₱0</strong>
               </div>
               <div class="calc-divider" style="margin:6px 0;"></div>
               <div class="calc-row total-row">
@@ -708,12 +794,17 @@ function selectProtectionTier(tier) {
   updatePriceEstimate();
 }
 
+const ACTIVE_PROMOS = <?= json_encode($activePromosForJs, JSON_UNESCAPED_SLASHES) ?>;
+
 function updatePriceEstimate() {
   const startInput = document.getElementById('booking-start');
   const endInput = document.getElementById('booking-end');
   const daysEl = document.getElementById('calc-days');
   const baseTotalEl = document.getElementById('calc-base-total');
   const protFeeEl = document.getElementById('calc-protection-fee');
+  const discountRow = document.getElementById('calc-discount-row');
+  const discountLabelEl = document.getElementById('calc-discount-label');
+  const discountAmtEl = document.getElementById('calc-discount-amount');
   const totalEl = document.getElementById('calc-total');
   const dailyRate = parseFloat(document.getElementById('booking-daily-rate')?.value || '0');
 
@@ -735,14 +826,70 @@ function updatePriceEstimate() {
     else if (selectedProt === 'premium') protDaily = 600;
 
     const protFee = diffDays * protDaily;
-    const grandTotal = baseTotal + protFee;
+    const grossTotal = baseTotal + protFee;
+
+    // 1. Statutory Senior/PWD savings
+    let statutorySavings = 0;
+    const applyStat = document.getElementById('booking-apply-statutory')?.checked || false;
+    const applyVatEx = document.getElementById('booking-apply-vat-exempt')?.checked || false;
+    if (applyStat) {
+      const vatableSales = grossTotal / 1.12;
+      const vatExempt = applyVatEx ? (grossTotal - vatableSales) : 0;
+      const discBase = applyVatEx ? vatableSales : grossTotal;
+      statutorySavings = vatExempt + (discBase * 0.20);
+    }
+
+    // 2. Commercial savings (Duration tier + Promo code)
+    let commSavings = 0;
+    let commLabels = [];
+    if (diffDays >= 30) {
+      commSavings += grossTotal * 0.20;
+      commLabels.push('30+ Days 20%');
+    } else if (diffDays >= 7) {
+      commSavings += grossTotal * 0.10;
+      commLabels.push('7+ Days 10%');
+    }
+    const promoCode = (document.getElementById('booking-promo-code')?.value || '').trim().toUpperCase();
+    if (promoCode && ACTIVE_PROMOS[promoCode]) {
+      const p = ACTIVE_PROMOS[promoCode];
+      if (diffDays >= p.minDays && grossTotal >= p.minAmt) {
+        const rem = Math.max(0, grossTotal - commSavings);
+        let pAmt = p.mode === 'percentage' ? rem * (p.val / 100) : Math.min(rem, p.val);
+        if (p.cap !== null) pAmt = Math.min(pAmt, p.cap);
+        commSavings += pAmt;
+        commLabels.push(promoCode);
+      }
+    }
+
+    // RA 9994 / RA 10754: Higher benefit wins (non-stackable)
+    let totalSavings = 0;
+    let savingsLbl = 'Discount Savings:';
+    if (applyStat && statutorySavings >= commSavings) {
+      totalSavings = statutorySavings;
+      savingsLbl = applyVatEx ? 'Senior/PWD 20% + VAT Exempt:' : 'Senior/PWD 20% Discount:';
+    } else if (commSavings > 0) {
+      totalSavings = commSavings;
+      savingsLbl = 'Promo (' + commLabels.join(' + ') + '):';
+    }
+
+    const grandTotal = Math.max(0, Math.round((grossTotal - totalSavings) * 100) / 100);
 
     daysEl.textContent = diffDays + ' day(s)';
-    if (baseTotalEl) baseTotalEl.textContent = '₱' + baseTotal.toLocaleString('en-US');
-    if (protFeeEl) protFeeEl.textContent = '₱' + protFee.toLocaleString('en-US');
-    totalEl.textContent = '₱' + grandTotal.toLocaleString('en-US');
+    if (baseTotalEl) baseTotalEl.textContent = '₱' + baseTotal.toLocaleString('en-US', { maximumFractionDigits: 2 });
+    if (protFeeEl) protFeeEl.textContent = '₱' + protFee.toLocaleString('en-US', { maximumFractionDigits: 2 });
+    if (discountRow && discountAmtEl && discountLabelEl) {
+      if (totalSavings > 0) {
+        discountRow.style.display = 'flex';
+        discountLabelEl.textContent = savingsLbl;
+        discountAmtEl.textContent = '-₱' + Math.round(totalSavings).toLocaleString('en-US');
+      } else {
+        discountRow.style.display = 'none';
+      }
+    }
+    totalEl.textContent = '₱' + Math.round(grandTotal).toLocaleString('en-US');
   }
 }
+document.addEventListener('DOMContentLoaded', updatePriceEstimate);
 </script>
 
 <?php include __DIR__ . '/../includes/footer.php'; ?>

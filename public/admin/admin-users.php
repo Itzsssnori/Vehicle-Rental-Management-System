@@ -149,8 +149,38 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             write_audit(db(), (int)$user['id'], 'user_role_changed', 'users', $id, 'Role changed to ' . $role . '.');
             $message = 'Account role updated successfully.';
         }
+    } elseif ($action === 'verify_statutory') {
+        $verId = filter_var($_POST['verification_id'] ?? null, FILTER_VALIDATE_INT);
+        if ($verId) {
+            db()->prepare("UPDATE customer_eligibility_verifications SET verification_status = 'verified', verified_by = ?, verified_at = NOW(), rejection_reason = NULL WHERE id = ?")
+                ->execute([(int)$user['id'], $verId]);
+            write_audit(db(), (int)$user['id'], 'statutory_id_verified', 'customer_eligibility_verifications', $verId, 'Verified Senior/PWD ID.');
+            $message = 'Statutory Senior/PWD ID has been verified and activated.';
+        }
+    } elseif ($action === 'reject_statutory') {
+        $verId = filter_var($_POST['verification_id'] ?? null, FILTER_VALIDATE_INT);
+        if ($verId) {
+            db()->prepare("UPDATE customer_eligibility_verifications SET verification_status = 'rejected', verified_by = ?, verified_at = NOW(), rejection_reason = 'ID could not be validated.' WHERE id = ?")
+                ->execute([(int)$user['id'], $verId]);
+            write_audit(db(), (int)$user['id'], 'statutory_id_rejected', 'customer_eligibility_verifications', $verId, 'Rejected Senior/PWD ID.');
+            $message = 'Statutory ID submission was rejected.';
+        }
     }
 }
+
+// Fetch Statutory Senior Citizen / PWD verifications (hub-scoped for branch admins)
+$statutoryQueue = [];
+try {
+    $sqWhere = $adminHubId ? "WHERE u.location_id = {$adminHubId}" : "";
+    $statutoryQueue = db()->query(
+        "SELECT cev.*, u.name AS user_name, u.email AS user_email
+         FROM customer_eligibility_verifications cev
+         INNER JOIN users u ON u.id = cev.user_id
+         {$sqWhere}
+         ORDER BY (cev.verification_status = 'pending') DESC, cev.updated_at DESC
+         LIMIT 20"
+    )->fetchAll(PDO::FETCH_ASSOC);
+} catch (Throwable $ignore) {}
 
 // Counts for filter badges
 $allLocations = get_active_locations();
@@ -267,6 +297,65 @@ include __DIR__ . '/../../includes/header.php';
             <span><?= e($error) ?></span>
           </div>
         </div>
+      <?php endif; ?>
+
+      <?php if (!empty($statutoryQueue)): ?>
+      <!-- Statutory Senior Citizen / PWD Verification Queue -->
+      <section class="portal-card" style="margin-bottom:20px;" aria-label="Statutory ID verifications">
+        <div class="portal-card-header" style="margin-bottom:12px;">
+          <div class="portal-card-title-group">
+            <h2>Senior Citizen &amp; PWD ID Verifications (RA 9994 / RA 10754)</h2>
+            <p>Review customer OSCA/NCDA ID submissions to unlock 20% statutory discounts and 12% PH VAT exemption.</p>
+          </div>
+          <span class="portal-badge badge-neutral"><?= count($statutoryQueue) ?> Record(s)</span>
+        </div>
+        <div class="portal-table-container">
+          <table class="portal-table">
+            <thead>
+              <tr>
+                <th>Customer</th>
+                <th>Privilege Type</th>
+                <th>ID Number &amp; Authority</th>
+                <th>Status</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              <?php foreach ($statutoryQueue as $sq): ?>
+                <tr>
+                  <td>
+                    <strong><?= e($sq['user_name']) ?></strong>
+                    <span style="display:block; font-size:0.74rem; color:#64748b;"><?= e($sq['user_email']) ?></span>
+                  </td>
+                  <td><?= $sq['eligibility_type'] === 'senior_citizen' ? 'Senior Citizen (RA 9994)' : 'PWD (RA 10754)' ?></td>
+                  <td>
+                    <code><?= e($sq['id_number']) ?></code>
+                    <span style="display:block; font-size:0.74rem; color:#64748b;"><?= e($sq['issuing_authority']) ?></span>
+                  </td>
+                  <td>
+                    <span class="portal-badge <?= $sq['verification_status'] === 'verified' ? 'badge-success' : ($sq['verification_status'] === 'pending' ? 'badge-warning' : 'badge-danger') ?>">
+                      <?= e(ucfirst($sq['verification_status'])) ?>
+                    </span>
+                  </td>
+                  <td>
+                    <?php if ($sq['verification_status'] !== 'verified'): ?>
+                      <form method="post" style="display:inline-flex; gap:6px;">
+                        <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
+                        <input type="hidden" name="id" value="<?= (int)$sq['user_id'] ?>">
+                        <input type="hidden" name="verification_id" value="<?= (int)$sq['id'] ?>">
+                        <button type="submit" name="action" value="verify_statutory" class="portal-btn-action btn-action-emerald" style="height:26px; padding:0 10px;">Verify ID</button>
+                        <button type="submit" name="action" value="reject_statutory" class="portal-btn-action btn-action-slate" style="height:26px; padding:0 8px;">Reject</button>
+                      </form>
+                    <?php else: ?>
+                      <span style="font-size:0.74rem; color:#059669; font-weight:700;">Active Privilege</span>
+                    <?php endif; ?>
+                  </td>
+                </tr>
+              <?php endforeach; ?>
+            </tbody>
+          </table>
+        </div>
+      </section>
       <?php endif; ?>
 
       <!-- Main Accounts Container Card -->

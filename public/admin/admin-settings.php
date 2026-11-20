@@ -72,7 +72,50 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             write_audit(db(), (int)$user['id'], 'password_changed', 'users', (int)$user['id'], 'Updated administrator sign-in password');
             $passwordMessage = 'Your account security credentials have been updated successfully.';
         }
+    } elseif ($action === 'toggle_promo' && is_super_admin($user)) {
+        $promoId = filter_var($_POST['promo_id'] ?? null, FILTER_VALIDATE_INT);
+        if ($promoId) {
+            db()->prepare('UPDATE promo_codes SET is_active = IF(is_active = 1, 0, 1) WHERE id = ?')->execute([$promoId]);
+            write_audit(db(), (int)$user['id'], 'promo_toggled', 'promo_codes', $promoId, 'Toggled promo code status');
+            $profileMessage = 'Promo code status updated.';
+        }
+    } elseif ($action === 'create_promo' && is_super_admin($user)) {
+        $code = strtoupper(trim($_POST['code'] ?? ''));
+        $ruleId = filter_var($_POST['discount_rule_id'] ?? null, FILTER_VALIDATE_INT);
+        $maxRed = filter_var($_POST['max_redemptions'] ?? null, FILTER_VALIDATE_INT) ?: null;
+        if ($code === '' || !$ruleId || !preg_match('/^[A-Z0-9_-]{3,40}$/', $code)) {
+            $profileError = 'Enter a valid alphanumeric promo code (3-40 chars) and select a discount rule.';
+        } else {
+            try {
+                db()->prepare('INSERT INTO promo_codes (code, discount_rule_id, max_redemptions, per_customer_limit, is_active) VALUES (?, ?, ?, 1, 1)')
+                    ->execute([$code, $ruleId, $maxRed]);
+                write_audit(db(), (int)$user['id'], 'promo_created', 'promo_codes', (int)db()->lastInsertId(), "Created promo code {$code}");
+                $profileMessage = "Promo code {$code} created and activated.";
+            } catch (Throwable $ex) {
+                $profileError = 'Could not create promo code (it may already exist).';
+            }
+        }
     }
+}
+
+// Fetch Promo Codes & Discount Rules for Super Admin
+$promoCodesList = [];
+$discountRulesList = [];
+if (is_super_admin($user)) {
+    try {
+        $discountRulesList = db()->query(
+            "SELECT dr.id, dr.name, dr.calculation_mode, dr.discount_value, dr.vat_exempt_eligible, dr.is_stackable, dr.is_active, dt.label AS type_label
+             FROM discount_rules dr
+             INNER JOIN discount_types dt ON dt.id = dr.discount_type_id
+             ORDER BY dr.priority ASC"
+        )->fetchAll(PDO::FETCH_ASSOC);
+        $promoCodesList = db()->query(
+            "SELECT pc.*, dr.name AS rule_name, dr.calculation_mode, dr.discount_value
+             FROM promo_codes pc
+             INNER JOIN discount_rules dr ON dr.id = pc.discount_rule_id
+             ORDER BY pc.created_at DESC"
+        )->fetchAll(PDO::FETCH_ASSOC);
+    } catch (Throwable $ignore) {}
 }
 
 // Hub fleet counts
@@ -358,7 +401,79 @@ include __DIR__ . '/../../includes/header.php';
         </div>
       </section>
 
-      <!-- Row 3: Operating Hubs Directory -->
+      <!-- Row 3: Discounts & Promo Codes Management (Super Admin Only) -->
+      <section class="portal-card" style="margin-bottom:24px;">
+        <div class="portal-card-header" style="margin-bottom:14px; padding-bottom:10px;">
+          <div class="portal-card-title-group">
+            <span style="font-size:0.70rem; font-weight:800; text-transform:uppercase; color:#e53e3e; letter-spacing:0.05em;">PRICING &amp; PROMOTIONS</span>
+            <h2 style="font-size:1.15rem; margin-top:2px;">Promo Codes &amp; Philippine Discount Rules</h2>
+            <p style="font-size:0.78rem; color:#64748b; margin-top:2px;">Create promotional vouchers or toggle active codes across all regional hubs.</p>
+          </div>
+          <span class="portal-badge badge-neutral"><?= count($promoCodesList) ?> Vouchers</span>
+        </div>
+
+        <form method="post" style="display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; margin-bottom:16px; padding:12px 14px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px;">
+          <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
+          <input type="hidden" name="action" value="create_promo">
+          <div style="flex:1; min-width:150px;">
+            <label for="new-promo-code" style="display:block; font-size:0.70rem; font-weight:700; color:#475569; margin-bottom:4px; text-transform:uppercase;">Promo Code</label>
+            <input id="new-promo-code" type="text" name="code" required placeholder="e.g. SUMMER15" style="height:34px; font-size:0.82rem; text-transform:uppercase;">
+          </div>
+          <div style="flex:2; min-width:220px;">
+            <label for="new-promo-rule" style="display:block; font-size:0.70rem; font-weight:700; color:#475569; margin-bottom:4px; text-transform:uppercase;">Discount Rule</label>
+            <select id="new-promo-rule" name="discount_rule_id" required style="height:34px; font-size:0.82rem;">
+              <?php foreach ($discountRulesList as $dr): ?>
+                <option value="<?= (int)$dr['id'] ?>"><?= e($dr['name']) ?> (<?= $dr['calculation_mode'] === 'percentage' ? number_format((float)$dr['discount_value'], 0) . '%' : 'PHP ' . number_format((float)$dr['discount_value'], 0) ?>)</option>
+              <?php endforeach; ?>
+            </select>
+          </div>
+          <div style="width:120px;">
+            <label for="new-promo-max" style="display:block; font-size:0.70rem; font-weight:700; color:#475569; margin-bottom:4px; text-transform:uppercase;">Max Uses</label>
+            <input id="new-promo-max" type="number" name="max_redemptions" min="1" placeholder="Unlimited" style="height:34px; font-size:0.82rem;">
+          </div>
+          <button type="submit" class="btn btn-coral" style="height:34px; padding:0 16px; font-size:0.80rem; border-radius:6px;">Add Promo Code</button>
+        </form>
+
+        <div class="portal-table-container">
+          <table class="portal-table">
+            <thead>
+              <tr>
+                <th>Voucher Code</th>
+                <th>Linked Discount Rule</th>
+                <th>Discount Value</th>
+                <th>Redemptions</th>
+                <th>Status</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              <?php foreach ($promoCodesList as $pc): ?>
+                <tr>
+                  <td><strong style="font-family:monospace; color:#0f172a;"><?= e($pc['code']) ?></strong></td>
+                  <td><?= e($pc['rule_name']) ?></td>
+                  <td><?= $pc['calculation_mode'] === 'percentage' ? number_format((float)$pc['discount_value'], 0) . '% Off' : '₱' . number_format((float)$pc['discount_value'], 2) . ' Off' ?></td>
+                  <td><?= (int)$pc['current_redemptions'] ?> / <?= $pc['max_redemptions'] ? (int)$pc['max_redemptions'] : 'Unlimited' ?></td>
+                  <td>
+                    <span class="portal-badge <?= (int)$pc['is_active'] === 1 ? 'badge-success' : 'badge-neutral' ?>">
+                      <?= (int)$pc['is_active'] === 1 ? 'Active' : 'Disabled' ?>
+                    </span>
+                  </td>
+                  <td>
+                    <form method="post" style="display:inline;">
+                      <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
+                      <input type="hidden" name="action" value="toggle_promo">
+                      <input type="hidden" name="promo_id" value="<?= (int)$pc['id'] ?>">
+                      <button type="submit" class="btn btn-secondary" style="padding:4px 10px; font-size:0.74rem;"><?= (int)$pc['is_active'] === 1 ? 'Disable' : 'Enable' ?></button>
+                    </form>
+                  </td>
+                </tr>
+              <?php endforeach; ?>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Row 4: Operating Hubs Directory -->
       <section class="portal-card">
         <div class="portal-card-header" style="margin-bottom:12px; padding-bottom:10px;">
           <div class="portal-card-title-group">
