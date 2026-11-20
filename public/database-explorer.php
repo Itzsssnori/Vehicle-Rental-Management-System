@@ -9,6 +9,11 @@
  *  - Interactive read-only SQL Query Console (SELECT / SHOW / DESCRIBE / EXPLAIN)
  */
 require_once __DIR__ . '/../config.php';
+$user = require_role('admin');
+if (!is_super_admin($user)) {
+    http_response_code(403);
+    exit('Forbidden: Super Administrator access is required to inspect live database tables.');
+}
 $pdo = db();
 
 // Cluster mapping for all VELO VRMS tables
@@ -99,9 +104,11 @@ $queryDurationMs = 0;
 
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && $sqlInput !== '') {
     verify_csrf();
-    // Strictly allow read-only inspection queries
+    // Strictly allow read-only inspection queries and block credential/token tables
     if (!preg_match('/^\s*(SELECT|SHOW|DESCRIBE|DESC|EXPLAIN)\b/i', $sqlInput) || preg_match('/;\s*\S/', $sqlInput)) {
         $queryError = 'Only single read-only queries (SELECT, SHOW, DESCRIBE, EXPLAIN) are permitted in the live explorer.';
+    } elseif (preg_match('/\b(password_hash|auth_tokens|mysql\.user|information_schema\.user_privileges)\b/i', $sqlInput)) {
+        $queryError = 'Query blocked by security policy: credential and token columns cannot be queried here.';
     } else {
         $t0 = microtime(true);
         try {

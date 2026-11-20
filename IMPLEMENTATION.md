@@ -12,7 +12,7 @@ Everything you need on presentation day — browser URLs, login accounts, termin
 | **Car Listing / Fleet Catalog** | `http://vrms.local/vehicles.php` |
 | **Login Page** | `http://vrms.local/login.php` |
 | **3NF Clustered ER Diagram** | `http://vrms.local/database-clusters.html` |
-| **Live Database Workbench & SQL Console** | `http://vrms.local/database-explorer.php` |
+| **Live Database Workbench & SQL Console** | `http://vrms.local/database-explorer.php` *(Super Admin sign-in required)* |
 | **phpMyAdmin (Visual ER Designer)** | `http://vrms.local/phpmyadmin/` *(click `vrms` -> `Designer` tab)* |
 | **Offline-Ready JSON Fleet API** | `http://vrms.local/api/vehicles.php` |
 

@@ -179,7 +179,6 @@ include __DIR__ . '/../includes/header.php';
       <div class="auth-footer-links">
         <p>Already have an account? <a href="/login.php">Log in</a></p>
         <p class="secondary-help">Operations or fleet personnel? <a href="/staff-register.php">Register for staff approval</a></p>
-        <p class="secondary-help">Didn't receive verification email? <a href="/resend-verification.php">Resend link</a></p>
       </div>
     </section>
   </div>
